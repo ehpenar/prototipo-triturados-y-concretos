@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { createId, normalizeText } from "../utils/helpers.js";
+import { CONFIG } from "../constants/config.js";
+import { createId, extractSpreadsheetId, normalizeText } from "../utils/helpers.js";
 import {
   updateSheetRow,
   appendSheetRow,
@@ -8,7 +9,9 @@ import {
 import { FilterSelect } from "../components/FilterSelect.jsx";
 import { EmptyState } from "../components/EmptyState.jsx";
 
-const TARGET_RECORDS_SHEET = "Respuestas de formulario 1";
+const TARGET_RECORDS_SHEET = "copia de prueba respuestas de formulario 1";
+const TARGET_SPREADSHEET_ID = "1iMCO8CtmN7-2LEcNWbEau9CMWauvXsKIUO3kkym6jJM";
+const TARGET_SHEET_ID = "1147287460";
 
 export function Records({
   addLog,
@@ -23,69 +26,48 @@ export function Records({
   tokenRef,
   onSaved,
 }) {
+  const [viewMode, setViewMode] = useState("sheets");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(75);
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const [showAppend, setShowAppend] = useState(false);
   const [showStructure, setShowStructure] = useState(false);
   const tableRecords = useMemo(
-    () => records.filter((record) => isTargetSheet(record.sheetName)),
-    [records],
+    () => sourceRecords.filter((record) => isTargetRecord(record)),
+    [sourceRecords],
   );
   const headers = useMemo(() => tableRecords[0]?.headers || [], [tableRecords]);
   const totalPages = Math.max(1, Math.ceil(tableRecords.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const pageRecords = useMemo(() => tableRecords.slice((safePage - 1) * pageSize, safePage * pageSize), [tableRecords, safePage, pageSize]);
   const selectedRecord = tableRecords.find((record) => record.uid === selectedRecordId) || pageRecords[0] || null;
-  const selectedNotes = notes.filter((note) => note.recordId && selectedRecord && note.recordId === selectedRecord.uid);
   const selectedSheet = useMemo(() => {
-    if (!filters.document || !filters.sheet) return null;
-    const document = documents.find((item) => item.source.name === filters.document || item.title === filters.document);
-    return document?.sheets.find((sheet) => sheet.title === filters.sheet)
-      ? { document, sheet: document.sheets.find((sheet) => sheet.title === filters.sheet) }
-      : null;
-  }, [documents, filters.document, filters.sheet]);
+    const document = documents.find((item) => item.sheets.some((sheet) => isTargetSheet(sheet)));
+    const sheet = document?.sheets.find((item) => isTargetSheet(item));
+    return document && sheet ? { document, sheet } : null;
+  }, [documents]);
+  const embeddedSheet = useMemo(() => findEmbeddedSheet(documents), [documents]);
+  const embedUrl = buildGoogleSheetsEmbedUrl(embeddedSheet);
 
   useEffect(() => {
     setPage(1);
-  }, [filters, tableRecords.length]);
+  }, [filters, tableRecords.length, viewMode]);
 
   return (
     <section className="view active records-view">
       <section className="records-toolbar panel">
-        <div className="filters">
-          <FilterSelect
-            label="Todos los documentos"
-            value={filters.document}
-            values={[...new Set(sourceRecords.map((record) => record.sourceName))]}
-            onChange={(document) => setFilters((current) => ({ ...current, document }))}
-          />
-          <FilterSelect
-            label="Todas las pestanas"
-            value={filters.sheet}
-            values={[...new Set(sourceRecords.map((record) => record.sheetName))]}
-            onChange={(sheet) => setFilters((current) => ({ ...current, sheet }))}
-          />
-          <FilterSelect
-            label="Todos los tipos"
-            value={filters.type}
-            values={[...new Set(sourceRecords.map((record) => record.type))]}
-            onChange={(type) => setFilters((current) => ({ ...current, type }))}
-          />
-          <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
-            <option value={50}>50 filas</option>
-            <option value={75}>75 filas</option>
-            <option value={150}>150 filas</option>
-            <option value={300}>300 filas</option>
-          </select>
-          <button type="button" onClick={() => setShowAppend((current) => !current)}>
-            Nuevo registro
+        <div>
+          <h2>Registros</h2>
+          <p className="note">
+            Alterna entre la hoja embebida y la vista editable con acciones internas.
+          </p>
+        </div>
+        <div className="view-toggle">
+          <button className={viewMode === "sheets" ? "active-toggle" : ""} type="button" onClick={() => setViewMode("sheets")}>
+            Vista Google Sheets
           </button>
-          <button type="button" onClick={() => setShowStructure((current) => !current)}>
-            Hojas y columnas
-          </button>
-          <button type="button" onClick={exportCurrentRecords}>
-            Exportar JSON
+          <button className={viewMode === "editable" ? "active-toggle" : ""} type="button" onClick={() => setViewMode("editable")}>
+            Vista editable
           </button>
         </div>
         <div className="record-summary">
@@ -95,75 +77,178 @@ export function Records({
           <span>columnas detectadas</span>
           <strong>{documents.reduce((total, document) => total + document.sheets.length, 0)}</strong>
           <span>hojas leidas</span>
+          {embeddedSheet?.editUrl && (
+            <a className="button-link" href={embeddedSheet.editUrl} rel="noreferrer" target="_blank">
+              Abrir en Google Sheets
+            </a>
+          )}
         </div>
       </section>
 
-      {showAppend && selectedSheet && (
-        <AppendRecordPanel document={selectedSheet.document} sheet={selectedSheet.sheet} tokenRef={tokenRef} onSaved={onSaved} />
-      )}
-
-      {showStructure && (
-        <RecordsSheetManager documents={documents} tokenRef={tokenRef} addLog={addLog} onSaved={onSaved} />
-      )}
-
-      <div className="records-layout">
-        <section className="panel records-table-panel">
-          <div className="panel-head">
-            <h2>Registros sincronizados</h2>
-            <span className="muted">Solo {TARGET_RECORDS_SHEET}</span>
-            <div className="inline-actions">
-              <button disabled={safePage <= 1} type="button" onClick={() => setPage((current) => Math.max(1, current - 1))}>
-                Anterior
+      {viewMode === "sheets" ? (
+        <section className="panel sheet-embed-panel">
+          {!embedUrl ? (
+            <EmptyState />
+          ) : (
+            <iframe
+              className="sheet-embed"
+              src={embedUrl}
+              title={`Google Sheets - ${TARGET_RECORDS_SHEET}`}
+            />
+          )}
+        </section>
+      ) : (
+        <>
+          <section className="records-toolbar panel">
+            <div className="filters">
+              <FilterSelect
+                label="Todos los documentos"
+                value={filters.document}
+                values={[...new Set(sourceRecords.map((record) => record.sourceName))]}
+                onChange={(document) => setFilters((current) => ({ ...current, document }))}
+              />
+              <FilterSelect
+                label="Todas las pestanas"
+                value={filters.sheet}
+                values={[...new Set(sourceRecords.map((record) => record.sheetName))]}
+                onChange={(sheet) => setFilters((current) => ({ ...current, sheet }))}
+              />
+              <FilterSelect
+                label="Todos los tipos"
+                value={filters.type}
+                values={[...new Set(sourceRecords.map((record) => record.type))]}
+                onChange={(type) => setFilters((current) => ({ ...current, type }))}
+              />
+              <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
+                <option value={50}>50 filas</option>
+                <option value={75}>75 filas</option>
+                <option value={150}>150 filas</option>
+                <option value={300}>300 filas</option>
+              </select>
+              <button type="button" onClick={() => setShowAppend((current) => !current)}>
+                Nuevo registro
               </button>
-              <span className="muted">Pagina {safePage} de {totalPages}</span>
-              <button disabled={safePage >= totalPages} type="button" onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>
-                Siguiente
+              <button type="button" onClick={() => setShowStructure((current) => !current)}>
+                Hojas y columnas
+              </button>
+              <button type="button" onClick={exportCurrentRecords}>
+                Exportar JSON
               </button>
             </div>
-          </div>
-          <div className="table-wrap records-table-wrap">
-            {!tableRecords.length ? (
-              <EmptyState />
-            ) : (
-              <table className="records-table">
-                <thead>
-                  <tr>
-                    <th>Accion</th>
-                    {headers.map((header, index) => (
-                      <th key={`header-${header}-${index}`}>{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRecords.map((record, recordIndex) => (
-                    <RecordReadOnlyRow
-                      headers={headers}
-                      isSelected={selectedRecord?.uid === record.uid}
-                      key={`record-row-${record.uid}-${recordIndex}`}
-                      record={record}
-                      onSelect={() => setSelectedRecordId(record.uid)}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </section>
+          </section>
 
-        <RecordSidePanel
-          record={selectedRecord}
-          notes={notes}
-          setNotes={setNotes}
-          tokenRef={tokenRef}
-          onSaved={onSaved}
-        />
-      </div>
+          {showAppend && selectedSheet && (
+            <AppendRecordPanel document={selectedSheet.document} sheet={selectedSheet.sheet} tokenRef={tokenRef} onSaved={onSaved} />
+          )}
+
+          {showStructure && (
+            <RecordsSheetManager documents={documents} tokenRef={tokenRef} addLog={addLog} onSaved={onSaved} />
+          )}
+
+          <div className="records-layout">
+            <section className="panel records-table-panel">
+              <div className="panel-head">
+                <h2>Registros sincronizados</h2>
+                <span className="muted">Solo {TARGET_RECORDS_SHEET}</span>
+                <div className="inline-actions">
+                  <button disabled={safePage <= 1} type="button" onClick={() => setPage((current) => Math.max(1, current - 1))}>
+                    Anterior
+                  </button>
+                  <span className="muted">Pagina {safePage} de {totalPages}</span>
+                  <button disabled={safePage >= totalPages} type="button" onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>
+                    Siguiente
+                  </button>
+                </div>
+              </div>
+              <div className="table-wrap records-table-wrap">
+                {!tableRecords.length ? (
+                  <EmptyState />
+                ) : (
+                  <table className="records-table">
+                    <thead>
+                      <tr>
+                        <th>Accion</th>
+                        {headers.map((header, index) => (
+                          <th key={`header-${header}-${index}`}>{header}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRecords.map((record, recordIndex) => (
+                        <RecordReadOnlyRow
+                          headers={headers}
+                          isSelected={selectedRecord?.uid === record.uid}
+                          key={`record-row-${record.uid}-${recordIndex}`}
+                          record={record}
+                          onSelect={() => setSelectedRecordId(record.uid)}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </section>
+
+            <RecordSidePanel
+              record={selectedRecord}
+              notes={notes}
+              setNotes={setNotes}
+              tokenRef={tokenRef}
+              onSaved={onSaved}
+            />
+          </div>
+        </>
+      )}
     </section>
   );
 }
 
-function isTargetSheet(sheetName) {
-  return normalizeText(sheetName) === normalizeText(TARGET_RECORDS_SHEET);
+function isTargetSheet(sheet) {
+  const title = typeof sheet === "string" ? sheet : sheet?.title;
+  const sheetId = typeof sheet === "string" ? "" : String(sheet?.sheetId || "");
+  return normalizeText(title) === normalizeText(TARGET_RECORDS_SHEET) || sheetId === TARGET_SHEET_ID;
+}
+
+function isTargetRecord(record) {
+  return (
+    isTargetSheet(record.sheetName) ||
+    (record.sourceId === TARGET_SPREADSHEET_ID && String(record.id || "").includes(`:${TARGET_SHEET_ID}:`))
+  );
+}
+
+function findEmbeddedSheet(documents) {
+  const matchingDocument = documents.find((document) =>
+    document.sheets.some((sheet) => isTargetSheet(sheet)),
+  );
+  const matchingSheet = matchingDocument?.sheets.find((sheet) => isTargetSheet(sheet));
+  const fallbackSource = CONFIG.initialSources[0];
+  const sourceUrl = matchingDocument?.source?.url || fallbackSource.url;
+  const spreadsheetId = matchingDocument?.id || extractSpreadsheetId(sourceUrl);
+  const gid = matchingSheet?.sheetId ?? extractGid(sourceUrl);
+
+  return {
+    editUrl: buildGoogleSheetsEditUrl(spreadsheetId, gid),
+    gid,
+    spreadsheetId,
+  };
+}
+
+function buildGoogleSheetsEmbedUrl(sheet) {
+  if (!sheet?.spreadsheetId) return "";
+  const params = new URLSearchParams({
+    gid: String(sheet.gid || 0),
+    rm: "minimal",
+  });
+  return `https://docs.google.com/spreadsheets/d/${sheet.spreadsheetId}/edit?${params.toString()}`;
+}
+
+function buildGoogleSheetsEditUrl(spreadsheetId, gid) {
+  if (!spreadsheetId) return "";
+  return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit?gid=${gid || 0}#gid=${gid || 0}`;
+}
+
+function extractGid(url) {
+  return String(url).match(/[?#&]gid=(\d+)/)?.[1] || "0";
 }
 
 function RecordReadOnlyRow({ headers, isSelected, record, onSelect }) {

@@ -7,13 +7,13 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
   const totalCost = sum(records.map((record) => record.normalized.costNumber));
   const totalHours = sum(records.map((record) => record.normalized.hoursNumber));
   const equipments = new Set(records.map((record) => cleanKey(record.normalized.equipment)).filter(Boolean));
-  const formOtRows = countRowsBySheetColumn(records, "Respuestas de formulario 1", "OT");
+  const formOtRows = countRowsBySheetColumn(records, "copia de prueba respuestas de formulario 1", "OT");
 
   return (
     <section className="view active">
       <div className="kpi-grid">
         <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} />
-        <Kpi label="Filas OT" value={formOtRows} hint="Columna OT en Respuestas de formulario 1" />
+        <Kpi label="Filas OT" value={formOtRows} hint="Columna OT en copia de prueba respuestas de formulario 1" />
         <Kpi label="Costo detectado" value={formatMoney(totalCost)} hint="Suma de columnas reconocidas como costo" />
         <Kpi label="Horas" value={totalHours.toFixed(1)} hint="Horas reconocidas en reportes" />
         <Kpi label="Equipos" value={equipments.size} hint="Activos detectados dinamicamente" />

@@ -45,21 +45,32 @@ button:disabled {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   min-height: 100vh;
+  transition: grid-template-columns 180ms ease;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 .sidebar {
   background: #202933;
   color: #f4f7f8;
-  padding: 20px;
+  padding: 20px 14px;
   display: flex;
   flex-direction: column;
   gap: 22px;
+  overflow: hidden;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.brand-text {
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .brand-mark {
@@ -76,6 +87,62 @@ button:disabled {
   display: block;
   color: #b7c2ca;
   margin-top: 2px;
+}
+
+.sidebar-toggle {
+  width: 100%;
+  background: #2d3945;
+  color: #f4f7f8;
+  border-color: #3b4b59;
+}
+
+.sidebar-collapsed .sidebar {
+  align-items: center;
+}
+
+.sidebar-collapsed .brand {
+  justify-content: center;
+}
+
+.sidebar-collapsed .brand-text,
+.sidebar-collapsed .nav-item span,
+.sidebar-collapsed .sync-card span {
+  display: none;
+}
+
+.sidebar-collapsed .nav,
+.sidebar-collapsed .sync-card,
+.sidebar-collapsed .sidebar-toggle {
+  width: 100%;
+}
+
+.sidebar-collapsed .nav-item {
+  min-width: 0;
+  padding: 0;
+}
+
+.sidebar-collapsed .nav-item::before {
+  content: attr(data-view);
+  display: block;
+  width: 100%;
+  text-align: center;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.sidebar-collapsed .sync-card {
+  padding: 8px;
+}
+
+.sidebar-collapsed .sync-card button {
+  padding: 0;
+  font-size: 0;
+}
+
+.sidebar-collapsed .sync-card button::before {
+  content: "Sync";
+  font-size: 11px;
 }
 
 .nav {
@@ -147,6 +214,19 @@ h2 {
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.ot-filter {
+  display: flex;
+  min-width: 240px;
+}
+
+.ot-filter span {
+  font-size: 12px;
+}
+
+.ot-filter input {
+  width: 100%;
 }
 
 input, select, textarea {
@@ -322,9 +402,16 @@ textarea {
 
 .records-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(360px, 0.8fr);
   gap: 16px;
   align-items: start;
+}
+
+.records-layout.with-detail {
+  grid-template-columns: minmax(0, 1.6fr) minmax(360px, 0.8fr);
+}
+
+.records-layout.table-only {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .records-table-panel {
@@ -374,6 +461,20 @@ textarea {
   background: #edf6f4;
 }
 
+.records-table .action-column {
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.edit-record-button {
+  min-width: 72px;
+  white-space: nowrap;
+  padding: 0 14px;
+}
+
 .record-side-panel {
   position: sticky;
   top: 18px;
@@ -420,6 +521,7 @@ table {
   border-collapse: collapse;
   width: 100%;
   min-width: 920px;
+  table-layout: fixed;
 }
 
 th, td {
@@ -435,11 +537,47 @@ th {
   top: 0;
   background: #eef3f4;
   z-index: 1;
+  user-select: none;
 }
 
 td {
-  max-width: 360px;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+th:not(.action-column) {
+  position: sticky;
+}
+
+th:not(.action-column) span {
+  display: block;
+  padding-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: col-resize;
+  z-index: 3;
+}
+
+.column-resizer:hover {
+  background: rgba(20, 108, 104, 0.2);
+}
+
+.records-table .ot-column {
+  white-space: nowrap;
 }
 
 .cell-input {
@@ -518,6 +656,34 @@ td {
   padding: 0;
   border: 0;
   flex-direction: column;
+}
+
+.email-account-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(140px, 180px) auto;
+  gap: 10px;
+  align-items: end;
+  margin: 14px 0;
+}
+
+.email-account-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.email-account-list h2 {
+  margin-top: 8px;
+}
+
+.email-account-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.email-account-item small {
+  display: block;
+  margin-top: 3px;
 }
 
 .dynamic-form {

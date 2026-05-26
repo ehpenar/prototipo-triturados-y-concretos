@@ -3,15 +3,20 @@ import { CONFIG } from "../constants/config.js";
 import { createId, extractSpreadsheetId, normalizeText } from "../utils/helpers.js";
 import {
   updateSheetRow,
+  updateSheetCell,
   appendSheetRow,
   createSheetWithHeaders,
 } from "../utils/googleSheets.js";
+import { generateOtReport } from "../utils/ai.js";
+import { FINANCIAL_SUMMARY_SHEET } from "../utils/financialSummary.js";
 import { FilterSelect } from "../components/FilterSelect.jsx";
 import { EmptyState } from "../components/EmptyState.jsx";
 
 const TARGET_RECORDS_SHEET = "copia de prueba respuestas de formulario 1";
-const TARGET_SPREADSHEET_ID = "1iMCO8CtmN7-2LEcNWbEau9CMWauvXsKIUO3kkym6jJM";
-const TARGET_SHEET_ID = "1147287460";
+const TARGET_SPREADSHEET_ID = "1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME";
+const TARGET_SHEET_ID = "1862269386";
+const FINANCIAL_SUMMARY_SPREADSHEET_ID = "1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ";
+const FINANCIAL_REPORT_COLUMN = "S";
 
 export function Records({
   addLog,
@@ -26,14 +31,17 @@ export function Records({
   tokenRef,
   onSaved,
 }) {
-  const [viewMode, setViewMode] = useState("sheets");
+  const [viewMode, setViewMode] = useState("editable");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(75);
   const [selectedRecordId, setSelectedRecordId] = useState("");
+  const [detailedRecordId, setDetailedRecordId] = useState("");
   const [showAppend, setShowAppend] = useState(false);
   const [showStructure, setShowStructure] = useState(false);
   const [otFilter, setOtFilter] = useState("");
   const [columnWidths, setColumnWidths] = useState({});
+  const [reportStatus, setReportStatus] = useState("");
+  const [otReports, setOtReports] = useState({});
   const targetRecords = useMemo(() => records, [records]);
   const otOptions = useMemo(() => {
     const values = sourceRecords.filter((record) => isTargetRecord(record)).map(getRecordOt).filter(Boolean);
@@ -49,6 +57,10 @@ export function Records({
   const safePage = Math.min(page, totalPages);
   const pageRecords = useMemo(() => tableRecords.slice((safePage - 1) * pageSize, safePage * pageSize), [tableRecords, safePage, pageSize]);
   const selectedRecord = tableRecords.find((record) => record.uid === selectedRecordId) || null;
+  const detailedRecord = tableRecords.find((record) => record.uid === detailedRecordId) || null;
+  const detailedReport = detailedRecord
+    ? otReports[detailedRecord.uid] || getCell(detailedRecord, ["INFORME"], ["informe"])
+    : "";
   const selectedSheet = useMemo(() => {
     const document = findFilteredDocument(documents, filters) || documents.find((item) => item.sheets.some((sheet) => isTargetSheet(sheet)));
     const sheet = findFilteredSheet(document, filters) || document?.sheets.find((item) => isTargetSheet(item)) || document?.sheets[0];
@@ -74,6 +86,39 @@ export function Records({
   useEffect(() => {
     setPage(1);
   }, [filters, tableRecords.length, viewMode, otFilter]);
+
+  useEffect(() => {
+    setReportStatus("");
+  }, [detailedRecordId]);
+
+  const generateReportForDetailedRecord = async () => {
+    if (!detailedRecord) return;
+    const ot = getRecordOt(detailedRecord);
+    const target = findFinancialReportTarget(detailedRecord, sourceRecords);
+    if (!target?.rowNumber) {
+      setReportStatus("No se encontro la fila de Hoja 2 para guardar el informe.");
+      return;
+    }
+    setReportStatus("Generando informe...");
+    try {
+      const consolidatedData = buildOtReportPayload(detailedRecord, sourceRecords);
+      const report = await generateOtReport(consolidatedData);
+      await updateSheetCell(
+        target.spreadsheetId,
+        FINANCIAL_SUMMARY_SHEET,
+        FINANCIAL_REPORT_COLUMN,
+        target.rowNumber,
+        report,
+        tokenRef,
+      );
+      setOtReports((current) => ({ ...current, [detailedRecord.uid]: report }));
+      setReportStatus(`Informe guardado en Hoja 2 columna ${FINANCIAL_REPORT_COLUMN}.`);
+      addLog?.(`Informe generado para OT ${ot || "NO ESPECIFICADO"} y guardado en columna ${FINANCIAL_REPORT_COLUMN}.`);
+      onSaved?.();
+    } catch (error) {
+      setReportStatus(`Error generando informe: ${error.message}`);
+    }
+  };
 
   const resizeColumn = (header, startEvent) => {
     startEvent.preventDefault();
@@ -167,17 +212,50 @@ export function Records({
       </section>
 
       {viewMode === "sheets" ? (
-        <section className="panel sheet-embed-panel">
-          {!embedUrl ? (
-            <EmptyState />
-          ) : (
-            <iframe
-              className="sheet-embed"
-              src={embedUrl}
-              title={`Google Sheets - ${TARGET_RECORDS_SHEET}`}
-            />
-          )}
-        </section>
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          <div className="item severity-medium" style={{ background: "#fffbeb", padding: "16px", borderRadius: "8px", borderLeft: "4px solid var(--warn)" }}>
+            <h3 style={{ margin: "0 0 6px 0", fontSize: "15px", color: "var(--ink)", display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>🔒</span> Información de Seguridad y Privacidad (Google Sheets)
+            </h3>
+            <p className="note" style={{ margin: 0, fontSize: "13px", lineHeight: "1.5", color: "var(--ink)" }}>
+              Por políticas estrictas de Google (Content Security Policy y protección contra ataques de Clickjacking), las hojas de cálculo privadas de Google Sheets <strong>no permiten ser editadas interactivamente dentro de un iframe</strong> en páginas de terceros. Por ello, verás errores como <code>frame-ancestors 'self'</code> o archivos no encontrados en la consola del navegador.
+            </p>
+            <div style={{ display: "flex", gap: "10px", marginTop: "12px", flexWrap: "wrap" }}>
+              {embeddedSheet?.editUrl && (
+                <a 
+                  className="button-link" 
+                  href={embeddedSheet.editUrl} 
+                  rel="noreferrer" 
+                  target="_blank"
+                  style={{ background: "var(--accent)", color: "#fff", borderColor: "var(--accent)", fontWeight: "600", textDecoration: "none" }}
+                >
+                  Abrir en Google Sheets (Pestaña nueva) ↗
+                </a>
+              )}
+              <button 
+                type="button" 
+                onClick={() => setViewMode("editable")}
+                style={{ fontWeight: "600", borderColor: "var(--line)" }}
+              >
+                Usar "Vista editable" de la App (Recomendado) ⚡
+              </button>
+            </div>
+            <p style={{ margin: "8px 0 0 0", fontSize: "11px", color: "var(--muted)" }}>
+              * Si realmente deseas integrarla de forma embebida aquí, debes abrir tu documento en Google Sheets, ir a <strong>Archivo &gt; Compartir &gt; Publicar en la Web</strong> y usar esa URL pública en los ajustes.
+            </p>
+          </div>
+          <section className="panel sheet-embed-panel">
+            {!embedUrl ? (
+              <EmptyState />
+            ) : (
+              <iframe
+                className="sheet-embed"
+                src={embedUrl}
+                title={`Google Sheets - ${TARGET_RECORDS_SHEET}`}
+              />
+            )}
+          </section>
+        </div>
       ) : (
         <>
           <section className="records-toolbar panel">
@@ -230,13 +308,14 @@ export function Records({
                   <table className="records-table">
                     <thead>
                       <tr>
-                        <th className="action-column">Accion</th>
+                        <th className="action-column" style={{ width: "170px", minWidth: "170px", maxWidth: "170px" }}>Accion</th>
                         {headers.map((header, index) => (
                           <ResizableHeader
                             header={header}
                             key={`header-${header}-${index}`}
                             onResizeStart={resizeColumn}
                             width={columnWidths[header] || defaultColumnWidth(header)}
+                            tooltip={calculateHeaderTooltip(header, tableRecords, sourceRecords)}
                           />
                         ))}
                       </tr>
@@ -250,6 +329,8 @@ export function Records({
                           record={record}
                           widths={columnWidths}
                           onSelect={() => setSelectedRecordId(record.uid)}
+                          onDetailClick={() => setDetailedRecordId(record.uid)}
+                          sourceRecords={sourceRecords}
                         />
                       ))}
                     </tbody>
@@ -273,8 +354,459 @@ export function Records({
           </div>
         </>
       )}
+
+      {/* Modal Ver Detalle */}
+      {detailedRecord && (
+        <div className="modal-overlay" style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: "rgba(17, 24, 39, 0.7)",
+          backdropFilter: "blur(8px)",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 1000
+        }}>
+          <div className="modal-card" style={{
+            background: "var(--surface)",
+            border: "1px solid var(--line)",
+            borderRadius: "16px",
+            boxShadow: "0 25px 60px rgba(0, 0, 0, 0.25)",
+            width: "min(95vw, 760px)",
+            maxHeight: "90vh",
+            overflow: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: "24px",
+            padding: "32px",
+            position: "relative"
+          }}>
+            {/* Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid var(--line)", paddingBottom: "18px" }}>
+              <div>
+                <span style={{ 
+                  background: "var(--accent)", 
+                  color: "#fff", 
+                  padding: "4px 12px", 
+                  borderRadius: "6px", 
+                  fontSize: "12px", 
+                  fontWeight: "700",
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase" 
+                }}>
+                  OT - {getRecordOt(detailedRecord)}
+                </span>
+                <h2 style={{ margin: "8px 0 2px 0", fontSize: "24px", color: "var(--ink)", fontWeight: "800" }}>
+                  Consolidado Completo de la OT
+                </h2>
+                <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)" }}>
+                  Información integrada de Resumen Financiero y Solicitudes de Pedido (SP)
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button
+                  disabled={reportStatus === "Generando informe..."}
+                  onClick={generateReportForDetailedRecord}
+                  style={{
+                    background: "var(--accent)",
+                    border: "1px solid var(--accent)",
+                    borderRadius: "8px",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    fontWeight: "700",
+                    padding: "9px 14px",
+                    textTransform: "uppercase",
+                  }}
+                  type="button"
+                >
+                  {reportStatus === "Generando informe..." ? "Generando..." : "Generar informe"}
+                </button>
+                <button
+                  onClick={() => setDetailedRecordId("")}
+                  style={{
+                    background: "#f1f5f9",
+                    border: 0,
+                    borderRadius: "50%",
+                    width: "36px",
+                    height: "36px",
+                    display: "grid",
+                    placeItems: "center",
+                    cursor: "pointer",
+                    fontWeight: "bold",
+                    color: "var(--muted)",
+                    transition: "all 150ms ease"
+                  }}
+                  type="button"
+                  aria-label="Cerrar modal"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            {reportStatus && (
+              <p className="note" style={{ margin: "-12px 0 0 0" }}>
+                {reportStatus}
+              </p>
+            )}
+
+            {/* Content Area */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              
+              {/* SECTION 1: RESUMEN FINANCIERO (HOJA 2) */}
+              <div style={{ background: "#f8fafc", border: "1px solid var(--line)", borderRadius: "12px", padding: "20px" }}>
+                <h3 style={{ margin: "0 0 16px 0", fontSize: "14px", color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700" }}>
+                  📊 Resumen Financiero y Mano de Obra (Hoja 2)
+                </h3>
+                
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
+                  {/* Mano Obra */}
+                  <div style={{ background: "var(--surface)", padding: "14px", borderRadius: "8px", border: "1px solid var(--line)", borderLeft: "4px solid var(--accent)" }}>
+                    <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--muted)", fontWeight: "600" }}>
+                      MANO DE OBRA (Col D)
+                    </span>
+                    <strong style={{ display: "block", fontSize: "18px", color: "var(--ink)", marginTop: "4px" }}>
+                      {detailedRecord.cells[detailedRecord.headers?.find(h => normalizeText(h) === normalizeText("MANO OBRA"))] || 
+                       detailedRecord.cells[detailedRecord.headers?.[3]] || "0"}
+                    </strong>
+                  </div>
+
+                  {/* Detalle Mano Obra */}
+                  <div style={{ background: "var(--surface)", padding: "14px", borderRadius: "8px", border: "1px solid var(--line)", borderLeft: "4px solid var(--warn)" }}>
+                    <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--muted)", fontWeight: "600" }}>
+                      DETALLE MANO DE OBRA (Col O)
+                    </span>
+                    <span style={{ display: "block", fontSize: "14px", color: "var(--ink)", marginTop: "6px", fontWeight: "600" }}>
+                      {detailedRecord.cells[detailedRecord.headers?.find(h => normalizeText(h) === normalizeText("DETALLE_MANO_OBRA"))] || 
+                       detailedRecord.cells[detailedRecord.headers?.[14]] || "Sin detalle registrado"}
+                    </span>
+                  </div>
+
+                  {/* Informe */}
+                  <div style={{ background: "var(--surface)", padding: "14px", borderRadius: "8px", border: "1px solid var(--line)", borderLeft: "4px solid #6366f1" }}>
+                    <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--muted)", fontWeight: "600" }}>
+                      INFORME (Col S)
+                    </span>
+                    <span style={{ display: "block", fontSize: "14px", color: "var(--ink)", marginTop: "6px", fontWeight: "600" }}>
+                      {detailedReport ? "Disponible" : "-"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {detailedReport && (
+                <div style={{ background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: "12px", padding: "20px" }}>
+                  <h3 style={{ margin: "0 0 12px 0", fontSize: "14px", color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700" }}>
+                    Informe generado
+                  </h3>
+                  <div style={{ whiteSpace: "pre-wrap", fontSize: "13px", lineHeight: "1.55", color: "var(--ink)" }}>
+                    {detailedReport}
+                  </div>
+                </div>
+              )}
+
+              {/* SECTION 2: SOLICITUDES DE PEDIDO RELACIONADAS (MATRIZ DE SEGUIMIENTO) */}
+              <div>
+                <h3 style={{ margin: "0 0 12px 0", fontSize: "14px", color: "var(--ink)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>📦 Solicitudes de Pedido (Matriz de Seguimiento)</span>
+                  <span style={{ background: "#e2e8f0", color: "var(--muted)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", textTransform: "none", letterSpacing: "normal" }}>
+                    {((sourceRecords || []).filter((rec) => normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento")) && getRecordOt(rec) === getRecordOt(detailedRecord))).length} Relacionadas
+                  </span>
+                </h3>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                  {((sourceRecords || []).filter((rec) => {
+                    const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
+                    if (!isMatrix) return false;
+                    const matrixOt = getRecordOt(rec);
+                    return matrixOt && normalizeText(matrixOt) === normalizeText(getRecordOt(detailedRecord));
+                  })).length === 0 ? (
+                    <div style={{ padding: "24px", border: "1px dashed var(--line)", borderRadius: "10px", textAlign: "center", color: "var(--muted)" }}>
+                      No se encontraron Solicitudes de Pedido (SP) vinculadas a esta OT en la Matriz de Seguimiento.
+                    </div>
+                  ) : (
+                    ((sourceRecords || []).filter((rec) => {
+                      const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
+                      if (!isMatrix) return false;
+                      const matrixOt = getRecordOt(rec);
+                      return matrixOt && normalizeText(matrixOt) === normalizeText(getRecordOt(detailedRecord));
+                    })).map((spRecord, spIndex) => {
+                      const spNumber = getMatrixField(spRecord, ["NUMERO DE LA SP (solo el numero sin letras)*", "NUMERO DE LA SP", "NÚMERO DE LA SP", "SP"]);
+                      const solicitante = getMatrixField(spRecord, ["Nombre de quien solicita/autoriza la SP", "Nombre de quien solicita", "Solicitante"]).toUpperCase();
+                      const proceso = getMatrixField(spRecord, ["Proceso que solicita la SP*", "Proceso que solicita la SP", "Proceso"]).toUpperCase();
+                      const clase = getMatrixField(spRecord, ["Clase de Solicitud", "Clase de solicitud", "Clase"]);
+                      const ordenCompra = getMatrixField(spRecord, ["ORDENES DE COMPRA", "ORDEN DE COMPRA", "ORDEN_DE_COMPRA", "OC"]);
+                      const plazoEntrega = getMatrixField(spRecord, ["PLAZO DE ENTREGA", "Plazo de Entrega", "Plazo de entrega", "Plazo"]);
+                      const estado = getMatrixField(spRecord, ["Estado Actual de la SP*", "Estado Actual de la SP", "Estado Actual", "Estado"]);
+                      const observacion = getMatrixField(spRecord, ["Observación (Descripción General SP)", "Observación", "Descripción General SP", "Observacion (Descripcion General SP)", "Observacion", "Descripcion General SP", "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICTUD"]);
+                      
+                      // Fechas
+                      const fechaRecepcion = getMatrixField(spRecord, ["Fecha de Recepción de la SP  Nota: si no tiene fecha coloque la de la SP *", "Fecha de Recepcion de la SP", "Fecha de Recepción de la SP"]);
+                      const fechaOc = getMatrixField(spRecord, ["FECHA ORDEN DE COMPRA", "Fecha Orden de Compra", "Fecha OC"]);
+                      const fechaAprobacion = getMatrixField(spRecord, ["FECHA APROBACION", "FECHA APROBACIÓN", "Fecha Aprobacion"]);
+
+                      return (
+                        <div key={`sp-card-${spNumber}-${spIndex}`} style={{ border: "1px solid var(--line)", borderRadius: "12px", padding: "18px", background: "var(--surface)", boxShadow: "0 2px 8px rgba(0,0,0,0.02)" }}>
+                          {/* Card Header */}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: "10px", marginBottom: "12px" }}>
+                            <strong style={{ fontSize: "15px", color: "var(--accent)" }}>
+                              📦 SP #{spNumber}
+                            </strong>
+                            {estado && estado !== "NO ESPECIFICADO" && (
+                              <span style={{ 
+                                background: estado.toLowerCase().includes("entrega") ? "#e6f4ea" : "#fef3c7", 
+                                color: estado.toLowerCase().includes("entrega") ? "#137333" : "#b25e00", 
+                                padding: "2px 8px", 
+                                borderRadius: "10px", 
+                                fontSize: "11px", 
+                                fontWeight: "700",
+                                textTransform: "uppercase"
+                              }}>
+                                {estado}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Card Grid Info */}
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", fontSize: "13px" }}>
+                            <div>
+                              <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>Proceso Solicitante</span>
+                              <strong style={{ color: "var(--ink)", textTransform: "uppercase" }}>{proceso}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>Nombre Autoriza</span>
+                              <strong style={{ color: "var(--ink)", textTransform: "uppercase" }}>{solicitante}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>Clase Solicitud</span>
+                              <span style={{ color: "var(--ink)", fontWeight: "600" }}>{clase}</span>
+                            </div>
+                            <div>
+                              <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>Orden de Compra</span>
+                              <span style={{ color: "var(--ink)", fontWeight: "600" }}>{ordenCompra}</span>
+                            </div>
+                            <div>
+                              <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>Plazo de Entrega</span>
+                              <span style={{ color: "var(--ink)", fontWeight: "600" }}>{plazoEntrega}</span>
+                            </div>
+                          </div>
+
+                          {/* Observación inside card */}
+                          {observacion && observacion !== "NO ESPECIFICADO" && (
+                            <div style={{ marginTop: "12px", background: "#f8fafc", padding: "10px", borderRadius: "6px", fontSize: "12px" }}>
+                              <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase", marginBottom: "4px" }}>Observación / Descripción General</span>
+                              <span style={{ color: "var(--ink)", lineHeight: "1.4", whiteSpace: "pre-wrap" }}>{observacion}</span>
+                            </div>
+                          )}
+
+                          {/* Fechas inside card */}
+                          {(fechaRecepcion !== "NO ESPECIFICADO" || fechaOc !== "NO ESPECIFICADO" || fechaAprobacion !== "NO ESPECIFICADO") && (
+                            <div style={{ marginTop: "12px", display: "flex", gap: "14px", flexWrap: "wrap", borderTop: "1px dashed var(--line)", paddingTop: "10px", fontSize: "11px" }}>
+                              {fechaRecepcion !== "NO ESPECIFICADO" && (
+                                <div>
+                                  <span style={{ color: "var(--muted)" }}>Recepción SP: </span>
+                                  <strong style={{ color: "var(--ink)" }}>{fechaRecepcion}</strong>
+                                </div>
+                              )}
+                              {fechaOc !== "NO ESPECIFICADO" && (
+                                <div>
+                                  <span style={{ color: "var(--muted)" }}>Orden Compra: </span>
+                                  <strong style={{ color: "var(--ink)" }}>{fechaOc}</strong>
+                                </div>
+                              )}
+                              {fechaAprobacion !== "NO ESPECIFICADO" && (
+                                <div>
+                                  <span style={{ color: "var(--muted)" }}>Aprobación: </span>
+                                  <strong style={{ color: "var(--ink)" }}>{fechaAprobacion}</strong>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* SECTION 3: DATOS COMPLEMENTARIOS DE LA OT */}
+              <div style={{ borderTop: "1px solid var(--line)", paddingTop: "18px" }}>
+                <h4 style={{ margin: "0 0 10px 0", fontSize: "12px", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700" }}>
+                  📋 Datos Generales de la OT
+                </h4>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
+                  {detailedRecord.headers.slice(0, 8).map((h) => (
+                    <div key={`tech-${h}`} style={{ background: "#f1f5f9", padding: "8px 12px", borderRadius: "6px" }}>
+                      <span style={{ display: "block", fontSize: "10px", color: "var(--muted)" }}>{h}</span>
+                      <span style={{ fontSize: "12px", fontWeight: "600", color: "var(--ink)" }}>{detailedRecord.cells[h] || "-"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px solid var(--line)", paddingTop: "16px" }}>
+              <button 
+                onClick={() => setDetailedRecordId("")} 
+                style={{ 
+                  padding: "10px 24px", 
+                  background: "var(--accent)", 
+                  color: "#fff", 
+                  border: 0, 
+                  borderRadius: "7px", 
+                  cursor: "pointer",
+                  fontWeight: "600",
+                  fontSize: "14px"
+                }}
+                type="button"
+              >
+                Cerrar detalle
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
+}
+
+function buildOtReportPayload(otRecord, sourceRecords) {
+  const ot = getRecordOt(otRecord) || "NO ESPECIFICADO";
+  const resumenFinanciero = recordToObject(otRecord);
+  const solicitudesPedido = getRelatedMatrixRecords(sourceRecords, ot).map(buildSpReportItem);
+  const ordenesCompra = [...new Set(solicitudesPedido.map((sp) => sp.ordenCompra).filter((value) => value && value !== "NO ESPECIFICADO"))].sort();
+
+  return {
+    ot,
+    fuente: {
+      resumenFinanciero: "Resumen Financiero OTS / Hoja 2",
+      matrizSeguimiento: "Copia de Matriz de Seguimiento / respuestas",
+    },
+    datosGeneralesOT: resumenFinanciero,
+    resumenFinanciero,
+    metricas: {
+      estadoGeneral: getCell(otRecord, ["ESTATUS DE LA OT", "ESTADO", "Estado Actual de la SP*"]) || "NO ESPECIFICADO",
+      tiempoEjecucion: getCell(otRecord, ["TIEMPO DE EJECUCION"]) || "NO ESPECIFICADO",
+      manoObra: getCell(otRecord, ["MANO OBRA"]) || "NO ESPECIFICADO",
+      detalleManoObra: getCell(otRecord, ["DETALLE_MANO_OBRA"]) || "NO ESPECIFICADO",
+      totalSPRegistrado: getCell(otRecord, ["#SP"]) || "NO ESPECIFICADO",
+      tiempoCompra: getCell(otRecord, ["TIEMPO DE COMPRA"]) || "NO ESPECIFICADO",
+      tiempoAprobacion: getCell(otRecord, ["TIEMPO APROBACION"]) || "NO ESPECIFICADO",
+      valorCompraSP: getCell(otRecord, ["VALOR DE LA COMPRA DE LA SP"]) || "NO ESPECIFICADO",
+      detalleCruceSP: getCell(otRecord, ["DETALLE_CRUCE_SP"]) || "NO ESPECIFICADO",
+    },
+    totalSP: solicitudesPedido.length,
+    totalOrdenesCompra: ordenesCompra.length,
+    ordenesCompra,
+    solicitudesPedido,
+    informeExistente: getCell(otRecord, ["INFORME"], ["informe"]) || "NO ESPECIFICADO",
+  };
+}
+
+function buildSpReportItem(spRecord, index) {
+  return {
+    indice: index + 1,
+    numeroSP: getMatrixField(spRecord, ["NUMERO DE LA SP (solo el numero sin letras)*", "NUMERO DE LA SP", "NÚMERO DE LA SP", "SP"]),
+    estado: getMatrixField(spRecord, ["Estado Actual de la SP*", "Estado Actual de la SP", "Estado Actual", "Estado"]),
+    claseSolicitud: getMatrixField(spRecord, ["Clase de Solicitud", "Clase de solicitud", "Clase"]),
+    procesoSolicitante: getMatrixField(spRecord, ["Proceso que solicita la SP*", "Proceso que solicita la SP", "Proceso"]),
+    nombreSolicitaAutoriza: getMatrixField(spRecord, ["Nombre de quien solicita/autoriza la SP", "Nombre de quien solicita", "Solicitante"]),
+    ordenCompra: getMatrixField(spRecord, ["ORDENES DE COMPRA", "ORDEN DE COMPRA", "ORDEN_DE_COMPRA", "OC"]),
+    plazoEntrega: getMatrixField(spRecord, ["PLAZO DE ENTREGA", "Plazo de Entrega", "Plazo de entrega", "Plazo"]),
+    observacionDescripcionGeneral: compactValue(
+      getMatrixField(spRecord, [
+        "Observación (Descripción General SP)",
+        "Observación",
+        "Descripción General SP",
+        "Observacion (Descripcion General SP)",
+        "Observacion",
+        "Descripcion General SP",
+        "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICTUD",
+      ]),
+      900,
+    ),
+    fechas: {
+      marcaTemporal: getMatrixField(spRecord, ["Marca temporal"]),
+      recepcionSP: getMatrixField(spRecord, ["Fecha de Recepción de la SP  Nota: si no tiene fecha coloque la de la SP *", "Fecha de Recepcion de la SP", "Fecha de Recepción de la SP"]),
+      aprobacion: getMatrixField(spRecord, ["FECHA APROBACION", "FECHA APROBACIÓN", "Fecha Aprobacion"]),
+      ordenCompra: getMatrixField(spRecord, ["FECHA ORDEN DE COMPRA", "Fecha Orden de Compra", "Fecha OC"]),
+      entrega: getMatrixField(spRecord, ["FECHA ENTREGA", "Fecha Entrega", "Fecha de entrega"]),
+    },
+    datosRelacionados: recordToObject(spRecord),
+  };
+}
+
+function recordToObject(record) {
+  return (record?.headers || []).reduce((result, header) => {
+    const value = compactValue(record.cells?.[header]);
+    result[header] = value || "NO ESPECIFICADO";
+    return result;
+  }, {});
+}
+
+function compactValue(value, maxLength = 1200) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function getRelatedMatrixRecords(sourceRecords, ot) {
+  const targetOt = normalizeText(ot);
+  return (sourceRecords || []).filter((rec) => {
+    const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
+    if (!isMatrix) return false;
+    const matrixOt = getRecordOt(rec);
+    return matrixOt && normalizeText(matrixOt) === targetOt;
+  });
+}
+
+function findFinancialReportTarget(record, sourceRecords) {
+  const currentOt = getRecordOt(record);
+  const isCurrentFinancialRow =
+    record?.sourceId === FINANCIAL_SUMMARY_SPREADSHEET_ID &&
+    normalizeText(record?.sheetName) === normalizeText(FINANCIAL_SUMMARY_SHEET);
+  if (isCurrentFinancialRow) {
+    return {
+      spreadsheetId: FINANCIAL_SUMMARY_SPREADSHEET_ID,
+      rowNumber: record.rowNumber,
+    };
+  }
+  const matchingFinancialRecord = (sourceRecords || []).find((item) => (
+    item.sourceId === FINANCIAL_SUMMARY_SPREADSHEET_ID &&
+    normalizeText(item.sheetName) === normalizeText(FINANCIAL_SUMMARY_SHEET) &&
+    normalizeText(getRecordOt(item)) === normalizeText(currentOt)
+  ));
+  return matchingFinancialRecord
+    ? { spreadsheetId: FINANCIAL_SUMMARY_SPREADSHEET_ID, rowNumber: matchingFinancialRecord.rowNumber }
+    : null;
+}
+
+function getMatrixField(matrixRecord, columnKeys) {
+  if (!matrixRecord) return "NO ESPECIFICADO";
+  const cellVal = getCell(matrixRecord, columnKeys);
+  const strVal = String(cellVal || "").trim();
+  if (!strVal) return "NO ESPECIFICADO";
+  return strVal;
+}
+
+function getCell(record, names, containsNames = []) {
+  if (!record) return "";
+  const normHeader = (val) => normalizeText(val).replace(/\s+/g, "");
+  for (const name of names) {
+    const header = record.headers?.find((item) => normHeader(item) === normHeader(name));
+    if (header && record.cells?.[header] !== undefined) return record.cells[header];
+  }
+  for (const name of containsNames) {
+    const target = normHeader(name);
+    const header = record.headers?.find((item) => normHeader(item).includes(target));
+    if (header && record.cells?.[header] !== undefined) return record.cells[header];
+  }
+  return "";
 }
 
 function isTargetSheet(sheet) {
@@ -345,9 +877,118 @@ function extractGid(url) {
   return String(url).match(/[?#&]gid=(\d+)/)?.[1] || "0";
 }
 
-function ResizableHeader({ header, onResizeStart, width }) {
+function getCellValue(record, header, sourceRecords) {
+  if (normalizeText(header) === normalizeText("ORDENES DE COMPRA")) {
+    const currentOt = getRecordOt(record);
+    if (!currentOt) return record.cells[header] ?? "";
+    const matrixRecordsForOt = (sourceRecords || []).filter((rec) => {
+      const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
+      if (!isMatrix) return false;
+      const matrixOt = getRecordOt(rec);
+      return matrixOt && normalizeText(matrixOt) === normalizeText(currentOt);
+    });
+    const purchaseOrders = matrixRecordsForOt
+      .map((rec) => {
+        const ocHeader = rec.headers?.find((h) => {
+          const norm = normalizeText(h);
+          return norm === normalizeText("ORDEN DE COMPRA") || norm === normalizeText("ORDENES DE COMPRA");
+        });
+        return ocHeader ? String(rec.cells[ocHeader] || "").trim() : "";
+      })
+      .filter(Boolean);
+    const uniqueOrders = [...new Set(purchaseOrders)].sort();
+    return uniqueOrders.length ? uniqueOrders.join(", ") : (record.cells[header] ?? "");
+  }
+  return record.cells[header] ?? "";
+}
+
+function parseFinancialMoney(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return value;
+  let text = String(value).trim().replace(/\$/g, "").replace(/\s+/g, "");
+  if (!text) return 0;
+
+  if (text.includes(",") && text.includes(".")) {
+    const firstComma = text.indexOf(",");
+    const firstDot = text.indexOf(".");
+    if (firstComma < firstDot) {
+      text = text.replace(/,/g, "");
+    } else {
+      text = text.replace(/\./g, "").replace(",", ".");
+    }
+  } else if (text.includes(",")) {
+    const parts = text.split(",");
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      text = text.replace(/,/g, "");
+    } else {
+      text = text.replace(",", ".");
+    }
+  } else if (text.includes(".")) {
+    const parts = text.split(".");
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      text = text.replace(/\./g, "");
+    }
+  }
+  return Number(text) || 0;
+}
+
+function countListElements(val) {
+  let str = String(val || "").trim();
+  if (!str) return 0;
+  if (str.startsWith("[") && str.endsWith("]")) {
+    str = str.slice(1, -1);
+  }
+  const parts = str.split(",").map((p) => p.trim()).filter(Boolean);
+  return parts.length;
+}
+
+function calculateHeaderTooltip(header, records, sourceRecords) {
+  const norm = normalizeText(header);
+  const isList = norm === "detalle cruce sp" || norm === "ordenes de compra" || norm === "detalle_cruce_sp" || norm === "ordenes_de_compra";
+  if (isList) {
+    let totalElements = 0;
+    records.forEach((rec) => {
+      const val = getCellValue(rec, header, sourceRecords);
+      totalElements += countListElements(val);
+    });
+    return `Cantidad total de items: ${totalElements}`;
+  }
+
+  const isNumeric = norm === "mano obra" || norm === "valor de la compra de la sp" || norm === "valor de la compra" || norm === "costo total" || norm === "mano_obra";
+  if (isNumeric) {
+    let totalSum = 0;
+    let count = 0;
+    records.forEach((rec) => {
+      const val = getCellValue(rec, header, sourceRecords);
+      if (val !== undefined && val !== null && String(val).trim() !== "") {
+        const num = parseFinancialMoney(val);
+        if (!isNaN(num)) {
+          totalSum += num;
+        }
+        count += 1;
+      }
+    });
+    const formattedSum = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(totalSum);
+    return `Total: ${formattedSum}\nCantidad de items: ${count}`;
+  }
+
+  let count = 0;
+  records.forEach((rec) => {
+    const val = getCellValue(rec, header, sourceRecords);
+    if (val !== undefined && val !== null && String(val).trim() !== "") {
+      count += 1;
+    }
+  });
+  return `Cantidad de items: ${count}`;
+}
+
+function ResizableHeader({ header, onResizeStart, width, tooltip }) {
   return (
-    <th className={isOtHeader(header) ? "ot-column" : ""} style={{ width, minWidth: width, maxWidth: width }}>
+    <th 
+      className={isOtHeader(header) ? "ot-column" : ""} 
+      style={{ width, minWidth: width, maxWidth: width }}
+      title={tooltip}
+    >
       <span>{header}</span>
       <button
         aria-label={`Ajustar ancho de ${header}`}
@@ -359,11 +1000,12 @@ function ResizableHeader({ header, onResizeStart, width }) {
   );
 }
 
-function RecordReadOnlyRow({ headers, isSelected, record, widths, onSelect }) {
+function RecordReadOnlyRow({ headers, isSelected, record, widths, onSelect, onDetailClick, sourceRecords }) {
   return (
     <tr className={isSelected ? "selected-row" : ""}>
-      <td className="action-column">
-        <button className="edit-record-button" type="button" onClick={onSelect}>Editar</button>
+      <td className="action-column" style={{ width: "170px", minWidth: "170px", maxWidth: "170px", display: "flex", gap: "6px", alignItems: "center", justifyContent: "center" }}>
+        <button className="edit-record-button" type="button" onClick={onSelect} style={{ minHeight: "30px", height: "30px", padding: "0 10px", display: "flex", alignItems: "center", justifyContent: "center" }}>Editar</button>
+        <button className="detail-record-button" type="button" onClick={onDetailClick} style={{ minHeight: "30px", height: "30px", padding: "0 10px", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--accent)", color: "#fff", borderColor: "var(--accent)", fontWeight: "600" }}>Detalle</button>
       </td>
       {headers.map((header, index) => (
         <td
@@ -375,7 +1017,7 @@ function RecordReadOnlyRow({ headers, isSelected, record, widths, onSelect }) {
             maxWidth: widths[header] || defaultColumnWidth(header),
           }}
         >
-          {record.cells[header] ?? ""}
+          {getCellValue(record, header, sourceRecords)}
         </td>
       ))}
     </tr>

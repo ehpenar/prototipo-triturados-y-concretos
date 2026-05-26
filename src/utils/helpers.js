@@ -42,10 +42,33 @@ export function sum(values) {
 }
 
 export function parseMoney(value) {
-  const text = String(value || "").replace(/[^\d,.-]/g, "");
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return value;
+  let text = String(value).trim().replace(/\$/g, "").replace(/\s+/g, "").replace(/[^\d,.-]/g, "");
   if (!text) return 0;
-  const normalized = text.includes(",") && text.includes(".") ? text.replace(/\./g, "").replace(",", ".") : text.replace(",", ".");
-  return Number(normalized) || 0;
+
+  if (text.includes(",") && text.includes(".")) {
+    const firstComma = text.indexOf(",");
+    const firstDot = text.indexOf(".");
+    if (firstComma < firstDot) {
+      text = text.replace(/,/g, "");
+    } else {
+      text = text.replace(/\./g, "").replace(",", ".");
+    }
+  } else if (text.includes(",")) {
+    const parts = text.split(",");
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      text = text.replace(/,/g, "");
+    } else {
+      text = text.replace(",", ".");
+    }
+  } else if (text.includes(".")) {
+    const parts = text.split(".");
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      text = text.replace(/\./g, "");
+    }
+  }
+  return Number(text) || 0;
 }
 
 export function parseDate(value) {
@@ -105,7 +128,22 @@ export function loadSources() {
   const stored = localStorage.getItem("operation_ai_sources");
   if (!stored) return CONFIG.initialSources;
   try {
-    const storedSources = JSON.parse(stored);
+    let storedSources = JSON.parse(stored);
+    let migrated = false;
+    storedSources = storedSources.map((source) => {
+      if (source.url.includes("1iMCO8CtmN7-2LEcNWbEau9CMWauvXsKIUO3kkym6jJM")) {
+        migrated = true;
+        return {
+          ...source,
+          url: "https://docs.google.com/spreadsheets/d/1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME/edit?gid=1862269386#gid=1862269386",
+        };
+      }
+      return source;
+    });
+    if (migrated) {
+      localStorage.setItem("operation_ai_sources", JSON.stringify(storedSources));
+    }
+
     const initialNames = new Set(CONFIG.initialSources.map((source) => source.name));
     const initialIds = new Set(CONFIG.initialSources.map((source) => extractSpreadsheetId(source.url)).filter(Boolean));
     const customSources = storedSources.filter((source) => {

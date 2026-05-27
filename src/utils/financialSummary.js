@@ -22,6 +22,7 @@ export const FINANCIAL_SUMMARY_HEADERS = [
   "METODO_VALOR_COMPRA",
   "DETALLE_VALOR_COMPRA",
   "INFORME",
+  "NUMERO DE COLABORADORES",
 ];
 
 const SOURCE_NAMES = {
@@ -36,6 +37,7 @@ export function buildFinancialSummaryRows(documents) {
   const orders = records.filter((record) => sourceMatches(record, SOURCE_NAMES.orders) && sheetMatches(record, "respuestas de formulario 1"));
   const matrix = records.filter((record) => sourceMatches(record, SOURCE_NAMES.matrix) && sheetMatches(record, "respuestas de formulario 1"));
   const activities = records.filter((record) => sourceMatches(record, SOURCE_NAMES.activities) && sheetMatches(record, "respuestas de formulario 1"));
+  const billing = records.filter((record) => sourceMatches(record, SOURCE_NAMES.activities) && sheetMatches(record, "facturacion"));
   const personal = records.filter((record) => sourceMatches(record, SOURCE_NAMES.activities) && sheetMatches(record, "personal"));
   const financialSheetOne = records.filter((record) => sourceMatches(record, SOURCE_NAMES.financial) && sheetMatches(record, "hoja 1"));
 
@@ -43,10 +45,11 @@ export function buildFinancialSummaryRows(documents) {
   const matrixByOt = groupBy(matrix, getMatrixOt);
   const personalRates = buildPersonalRates(personal);
   const activitiesByOt = groupBy(activities, getActivityOt);
+  const collaboratorsByOt = groupCollaboratorsByOt(billing);
   const financialIndexes = buildFinancialIndexes(financialSheetOne);
 
   return orders
-    .map((order) => buildSummaryRow(order, { activitiesByOt, financialIndexes, matrixByOt, matrixBySp, personalRates }))
+    .map((order) => buildSummaryRow(order, { activitiesByOt, collaboratorsByOt, financialIndexes, matrixByOt, matrixBySp, personalRates }))
     .filter(Boolean);
 }
 
@@ -74,6 +77,7 @@ function buildSummaryRow(order, context) {
   const labor = calculateLabor(otNumber, context.activitiesByOt, context.personalRates);
   const purchaseValue = resolvePurchaseValue(otNumber, spResult.sp, matrixRecord, context.financialIndexes);
   const executionTime = getExecutionTime(order, orderDate, deliveryDate);
+  const collaborators = formatCollaborators(context.collaboratorsByOt.get(normalizeKey(otNumber)) || []);
 
   // Obtener todas las órdenes de compra asociadas a esta OT en la Matriz de Seguimiento
   const otMatrixRows = context.matrixByOt.get(normalizeKey(otNumber)) || [];
@@ -103,6 +107,7 @@ function buildSummaryRow(order, context) {
     "DETALLE_MANO_OBRA": labor.detail,
     "METODO_VALOR_COMPRA": purchaseValue.method,
     "DETALLE_VALOR_COMPRA": purchaseValue.detail,
+    "NUMERO DE COLABORADORES": collaborators,
   };
 }
 
@@ -181,6 +186,30 @@ function buildPersonalRates(records) {
   return rates;
 }
 
+function groupCollaboratorsByOt(records) {
+  const collaboratorsByOt = new Map();
+  records.forEach((record) => {
+    const ot = normalizeKey(getActivityOt(record));
+    const collaborator = String(getCell(record, ["colaborador", "COLABORADOR", "Collaborador"]) || "").trim();
+    if (!ot || !collaborator) return;
+    if (!collaboratorsByOt.has(ot)) collaboratorsByOt.set(ot, new Map());
+    const collaborators = collaboratorsByOt.get(ot);
+    const collaboratorKey = normalizeKey(collaborator);
+    if (collaboratorKey && !collaborators.has(collaboratorKey)) collaborators.set(collaboratorKey, collaborator);
+  });
+  return new Map(
+    [...collaboratorsByOt.entries()].map(([ot, collaborators]) => [
+      ot,
+      [...collaborators.values()].sort((left, right) => left.localeCompare(right, "es", { sensitivity: "base" })),
+    ]),
+  );
+}
+
+function formatCollaborators(collaborators) {
+  if (!collaborators.length) return "";
+  return [`Numero : ${collaborators.length}`, ...collaborators].join("\n");
+}
+
 function getOrderNumber(record) {
   return normalizeOt(getCell(record, ["5", "OT"]) || record.normalized?.work_order);
 }
@@ -253,7 +282,9 @@ function groupBy(records, keyFn) {
 }
 
 function sourceMatches(record, sourceName) {
-  return normalizeText(record.sourceName) === normalizeText(sourceName);
+  const currentSource = normalizeText(record.sourceName);
+  const targetSource = normalizeText(sourceName);
+  return currentSource === targetSource || currentSource.includes(targetSource);
 }
 
 function sheetMatches(record, sheetName) {

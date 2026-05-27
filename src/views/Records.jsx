@@ -58,8 +58,9 @@ export function Records({
   const pageRecords = useMemo(() => tableRecords.slice((safePage - 1) * pageSize, safePage * pageSize), [tableRecords, safePage, pageSize]);
   const selectedRecord = tableRecords.find((record) => record.uid === selectedRecordId) || null;
   const detailedRecord = tableRecords.find((record) => record.uid === detailedRecordId) || null;
+  const detailedFinancialRecord = detailedRecord ? findFinancialReportTarget(detailedRecord, sourceRecords)?.record || detailedRecord : null;
   const detailedReport = detailedRecord
-    ? otReports[detailedRecord.uid] || getCell(detailedRecord, ["INFORME"], ["informe"])
+    ? otReports[detailedRecord.uid] || getCell(detailedFinancialRecord, ["INFORME"], ["informe"])
     : "";
   const selectedSheet = useMemo(() => {
     const document = findFilteredDocument(documents, filters) || documents.find((item) => item.sheets.some((sheet) => isTargetSheet(sheet)));
@@ -101,7 +102,7 @@ export function Records({
     }
     setReportStatus("Generando informe...");
     try {
-      const consolidatedData = buildOtReportPayload(detailedRecord, sourceRecords);
+      const consolidatedData = buildOtReportPayload(detailedRecord, sourceRecords, target.record || detailedRecord);
       const report = await generateOtReport(consolidatedData);
       await updateSheetCell(
         target.spreadsheetId,
@@ -469,8 +470,7 @@ export function Records({
                       MANO DE OBRA (Col D)
                     </span>
                     <strong style={{ display: "block", fontSize: "18px", color: "var(--ink)", marginTop: "4px" }}>
-                      {detailedRecord.cells[detailedRecord.headers?.find(h => normalizeText(h) === normalizeText("MANO OBRA"))] || 
-                       detailedRecord.cells[detailedRecord.headers?.[3]] || "0"}
+                      {getCell(detailedFinancialRecord, ["MANO OBRA"]) || "0"}
                     </strong>
                   </div>
 
@@ -480,8 +480,7 @@ export function Records({
                       DETALLE MANO DE OBRA (Col O)
                     </span>
                     <span style={{ display: "block", fontSize: "14px", color: "var(--ink)", marginTop: "6px", fontWeight: "600" }}>
-                      {detailedRecord.cells[detailedRecord.headers?.find(h => normalizeText(h) === normalizeText("DETALLE_MANO_OBRA"))] || 
-                       detailedRecord.cells[detailedRecord.headers?.[14]] || "Sin detalle registrado"}
+                      {getCell(detailedFinancialRecord, ["DETALLE_MANO_OBRA"]) || "Sin detalle registrado"}
                     </span>
                   </div>
 
@@ -632,6 +631,60 @@ export function Records({
                 </div>
               </div>
 
+              {/* SECTION 3: REPORTE DE ACTIVIDADES (FACTURACION) */}
+              <div>
+                <h3 style={{ margin: "0 0 12px 0", fontSize: "14px", color: "var(--ink)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>Reporte de actividades (Facturacion)</span>
+                  <span style={{ background: "#e2e8f0", color: "var(--muted)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", textTransform: "none", letterSpacing: "normal" }}>
+                    {getRelatedBillingRecords(sourceRecords, getRecordOt(detailedRecord)).length} actividades
+                  </span>
+                </h3>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                  {getRelatedBillingRecords(sourceRecords, getRecordOt(detailedRecord)).length === 0 ? (
+                    <div style={{ padding: "24px", border: "1px dashed var(--line)", borderRadius: "10px", textAlign: "center", color: "var(--muted)" }}>
+                      No se encontraron actividades de facturacion vinculadas a esta OT.
+                    </div>
+                  ) : (
+                    getRelatedBillingRecords(sourceRecords, getRecordOt(detailedRecord)).map((activityRecord, activityIndex) => {
+                      const collaborator = getBillingField(activityRecord, ["colaborador", "COLABORADOR"]);
+                      const billedProcess = getBillingField(activityRecord, ["proceso al que se factura la actividad", "PROCESO AL QUE SE FACTURA LA ACTIVIDAD", "proceso al que se facturo la actividad", "PROCESO AL QUE SE FACTURO LA ACTIVIDAD", "proceso"]);
+                      const equipment = getBillingField(activityRecord, ["equipo intervenido", "EQUIPO INTERVENIDO", "equipo"]);
+                      const fieldReportOt = getBillingField(activityRecord, ["OT - REPORTE DE CAMPO", "OT reporte de campo", "OT REPORTE DE CAMPO", "ORDEN DE TRABAJO/REPORTE DE CAMPO"]);
+                      const hourmeter = getBillingField(activityRecord, ["HOROMETRO - KILOMETRAJE", "orometro dilometraje", "horometro kilometraje", "HOROMETRO/KILOMETRAJE", "HOROMETRO", "KILOMETRAJE"]);
+                      const activity = getBillingField(activityRecord, ["actividad realizada", "ACTIVIDAD REALIZADA", "actividad"]);
+                      const spareParts = getBillingField(activityRecord, ["respuestos utilizados", "repuestos utilizados", "REPUESTOS UTILIZADOS"]);
+
+                      return (
+                        <div key={`billing-activity-${activityRecord.uid}-${activityIndex}`} style={{ border: "1px solid var(--line)", borderRadius: "12px", padding: "18px", background: "var(--surface)", boxShadow: "0 2px 8px rgba(0,0,0,0.02)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: "10px", marginBottom: "12px", gap: "10px" }}>
+                            <strong style={{ fontSize: "15px", color: "var(--accent)" }}>
+                              Actividad #{activityIndex + 1}
+                            </strong>
+                            <span style={{ background: "#ecfeff", color: "#0f766e", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "700" }}>
+                              OT {fieldReportOt}
+                            </span>
+                          </div>
+
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", fontSize: "13px" }}>
+                            <ActivityField label="Colaborador" value={collaborator} />
+                            <ActivityField label="Proceso facturado" value={billedProcess} />
+                            <ActivityField label="Equipo intervenido" value={equipment} />
+                            <ActivityField label="OT reporte de campo" value={fieldReportOt} />
+                            <ActivityField label="Orometro / Kilometraje" value={hourmeter} />
+                          </div>
+
+                          <div style={{ marginTop: "12px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px" }}>
+                            <ActivityTextBlock label="Actividad realizada" value={activity} />
+                            <ActivityTextBlock label="Repuestos utilizados" value={spareParts} />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
               {/* SECTION 3: DATOS COMPLEMENTARIOS DE LA OT */}
               <div style={{ borderTop: "1px solid var(--line)", paddingTop: "18px" }}>
                 <h4 style={{ margin: "0 0 10px 0", fontSize: "12px", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700" }}>
@@ -675,9 +728,28 @@ export function Records({
   );
 }
 
-function buildOtReportPayload(otRecord, sourceRecords) {
+function ActivityField({ label, value }) {
+  return (
+    <div>
+      <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>{label}</span>
+      <strong style={{ color: "var(--ink)", textTransform: "uppercase" }}>{value || "NO ESPECIFICADO"}</strong>
+    </div>
+  );
+}
+
+function ActivityTextBlock({ label, value }) {
+  return (
+    <div style={{ background: "#f8fafc", padding: "10px", borderRadius: "6px", fontSize: "12px" }}>
+      <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase", marginBottom: "4px" }}>{label}</span>
+      <span style={{ color: "var(--ink)", lineHeight: "1.4", whiteSpace: "pre-wrap" }}>{value || "NO ESPECIFICADO"}</span>
+    </div>
+  );
+}
+
+function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecord) {
   const ot = getRecordOt(otRecord) || "NO ESPECIFICADO";
-  const resumenFinanciero = recordToObject(otRecord);
+  const resumenFinanciero = recordToObject(financialRecord);
+  const datosGeneralesOT = recordToObject(otRecord);
   const solicitudesPedido = getRelatedMatrixRecords(sourceRecords, ot).map(buildSpReportItem);
   const ordenesCompra = [...new Set(solicitudesPedido.map((sp) => sp.ordenCompra).filter((value) => value && value !== "NO ESPECIFICADO"))].sort();
 
@@ -687,18 +759,18 @@ function buildOtReportPayload(otRecord, sourceRecords) {
       resumenFinanciero: "Resumen Financiero OTS / Hoja 2",
       matrizSeguimiento: "Copia de Matriz de Seguimiento / respuestas",
     },
-    datosGeneralesOT: resumenFinanciero,
+    datosGeneralesOT,
     resumenFinanciero,
     metricas: {
-      estadoGeneral: getCell(otRecord, ["ESTATUS DE LA OT", "ESTADO", "Estado Actual de la SP*"]) || "NO ESPECIFICADO",
-      tiempoEjecucion: getCell(otRecord, ["TIEMPO DE EJECUCION"]) || "NO ESPECIFICADO",
-      manoObra: getCell(otRecord, ["MANO OBRA"]) || "NO ESPECIFICADO",
-      detalleManoObra: getCell(otRecord, ["DETALLE_MANO_OBRA"]) || "NO ESPECIFICADO",
-      totalSPRegistrado: getCell(otRecord, ["#SP"]) || "NO ESPECIFICADO",
-      tiempoCompra: getCell(otRecord, ["TIEMPO DE COMPRA"]) || "NO ESPECIFICADO",
-      tiempoAprobacion: getCell(otRecord, ["TIEMPO APROBACION"]) || "NO ESPECIFICADO",
-      valorCompraSP: getCell(otRecord, ["VALOR DE LA COMPRA DE LA SP"]) || "NO ESPECIFICADO",
-      detalleCruceSP: getCell(otRecord, ["DETALLE_CRUCE_SP"]) || "NO ESPECIFICADO",
+      estadoGeneral: getCell(financialRecord, ["ESTATUS DE LA OT", "ESTADO", "Estado Actual de la SP*"]) || "NO ESPECIFICADO",
+      tiempoEjecucion: getCell(financialRecord, ["TIEMPO DE EJECUCION"]) || "NO ESPECIFICADO",
+      manoObra: getCell(financialRecord, ["MANO OBRA"]) || "NO ESPECIFICADO",
+      detalleManoObra: getCell(financialRecord, ["DETALLE_MANO_OBRA"]) || "NO ESPECIFICADO",
+      totalSPRegistrado: getCell(financialRecord, ["#SP"]) || "NO ESPECIFICADO",
+      tiempoCompra: getCell(financialRecord, ["TIEMPO DE COMPRA"]) || "NO ESPECIFICADO",
+      tiempoAprobacion: getCell(financialRecord, ["TIEMPO APROBACION"]) || "NO ESPECIFICADO",
+      valorCompraSP: getCell(financialRecord, ["VALOR DE LA COMPRA DE LA SP"]) || "NO ESPECIFICADO",
+      detalleCruceSP: getCell(financialRecord, ["DETALLE_CRUCE_SP"]) || "NO ESPECIFICADO",
     },
     totalSP: solicitudesPedido.length,
     totalOrdenesCompra: ordenesCompra.length,
@@ -765,6 +837,38 @@ function getRelatedMatrixRecords(sourceRecords, ot) {
   });
 }
 
+function getRelatedBillingRecords(sourceRecords, ot) {
+  const targetOt = normalizeOtKey(ot);
+  return (sourceRecords || []).filter((rec) => {
+    const isActivitiesSource = normalizeText(rec.sourceName).includes(normalizeText("Reporte de Actividades Mantenimiento"));
+    const isBillingSheet = normalizeText(rec.sheetName) === normalizeText("FACTURACION") || hasBillingTableHeaders(rec);
+    if (!isActivitiesSource || !isBillingSheet) return false;
+    const billingOt = getBillingField(rec, ["OT"]);
+    return billingOt && normalizeOtKey(billingOt) === targetOt;
+  });
+}
+
+function hasBillingTableHeaders(record) {
+  const headers = record?.headers || [];
+  const hasCollaborator = headers.some((header) => normalizeText(header) === normalizeText("COLABORADOR"));
+  const hasBillingOt = headers.some((header) => normalizeText(header) === normalizeText("OT"));
+  const hasActivity = headers.some((header) => normalizeText(header) === normalizeText("ACTIVIDAD REALIZADA"));
+  return hasCollaborator && hasBillingOt && hasActivity;
+}
+
+function normalizeOtKey(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/(?:OT\s*[-:]?\s*)?(\d+)/i);
+  return match ? String(Number(match[1])) : normalizeText(text);
+}
+
+function getBillingField(record, columnKeys) {
+  if (!record) return "NO ESPECIFICADO";
+  const value = getCell(record, columnKeys);
+  const text = String(value || "").trim();
+  return text || "NO ESPECIFICADO";
+}
+
 function findFinancialReportTarget(record, sourceRecords) {
   const currentOt = getRecordOt(record);
   const isCurrentFinancialRow =
@@ -772,6 +876,7 @@ function findFinancialReportTarget(record, sourceRecords) {
     normalizeText(record?.sheetName) === normalizeText(FINANCIAL_SUMMARY_SHEET);
   if (isCurrentFinancialRow) {
     return {
+      record,
       spreadsheetId: FINANCIAL_SUMMARY_SPREADSHEET_ID,
       rowNumber: record.rowNumber,
     };
@@ -782,7 +887,7 @@ function findFinancialReportTarget(record, sourceRecords) {
     normalizeText(getRecordOt(item)) === normalizeText(currentOt)
   ));
   return matchingFinancialRecord
-    ? { spreadsheetId: FINANCIAL_SUMMARY_SPREADSHEET_ID, rowNumber: matchingFinancialRecord.rowNumber }
+    ? { record: matchingFinancialRecord, spreadsheetId: FINANCIAL_SUMMARY_SPREADSHEET_ID, rowNumber: matchingFinancialRecord.rowNumber }
     : null;
 }
 

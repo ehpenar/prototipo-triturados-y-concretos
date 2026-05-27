@@ -28,23 +28,23 @@ export const CONFIG = {
   },
   initialSources: [
     {
-      name: "Matriz de Seguimiento",
+      name: "Copia de Matriz de Seguimiento (respuestas)",
       url: "https://docs.google.com/spreadsheets/d/1Hh4p4ydxmfT1BHC3E8YLoluXVUOBZvOfUKT-yR3tjrI/edit?gid=1301505875#gid=1301505875",
       roleHint: "compras solicitudes repuestos proveedores costos estados fechas",
     },
     {
-      name: "Ordenes de Trabajo TYC",
+      name: "Copia de ORDENES DE TRABAJO TYC",
       url: "https://docs.google.com/spreadsheets/d/1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME/edit?gid=1862269386#gid=1862269386",
       roleHint: "ordenes trabajo equipos areas fallas prioridades responsables estados",
     },
     {
-      name: "Reporte de Actividades Mantenimiento",
+      name: "Copia de REPORTE DE ACTIVIDADES MANTENIMIENTO (respuestas)",
       url: "https://docs.google.com/spreadsheets/d/1PZCi-L47ltwrJXGdwF1gjWj7fZHdeFeS_MDwS8cpS3A/edit?gid=1575504867#gid=1575504867",
       roleHint: "actividades tecnicos horas equipos observaciones ot",
     },
     {
-      name: "Resumen Financiero OTS",
-      url: "https://docs.google.com/spreadsheets/d/1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ/edit?gid=0#gid=0",
+      name: "HOJA RESUMEN FINANCIERO OTS",
+      url: "https://docs.google.com/spreadsheets/d/1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ/edit?usp=sharing&utm_source=chatgpt.com&urp=gmail_link",
       roleHint: "costos finales mano obra repuestos equipo totales financiero",
     },
   ],

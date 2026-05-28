@@ -68,11 +68,12 @@ export async function fetchAllSheetValues(spreadsheetId, sheets, tokenRef, allow
 
 export async function updateSheetRow(record, headers, cells, tokenRef) {
   const values = headers.map((header) => cells[header] ?? "");
-  const range = encodeURIComponent(`${quoteSheetName(record.sheetName)}!A${record.rowNumber}:${columnName(headers.length)}${record.rowNumber}`);
+  const sheetRowRange = `${quoteSheetName(record.sheetName)}!A${record.rowNumber}:${columnName(headers.length)}${record.rowNumber}`;
+  const range = encodeURIComponent(sheetRowRange);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${record.sourceId}/values/${range}?valueInputOption=USER_ENTERED`;
   return googleFetch(url, tokenRef, {
     method: "PUT",
-    body: JSON.stringify({ range: `${quoteSheetName(record.sheetName)}!A${record.rowNumber}`, majorDimension: "ROWS", values: [values] }),
+    body: JSON.stringify({ range: sheetRowRange, majorDimension: "ROWS", values: [values] }),
   });
 }
 
@@ -180,6 +181,48 @@ export async function updateSheetCell(spreadsheetId, sheetName, column, row, val
     method: "PUT",
     body: JSON.stringify({ majorDimension: "ROWS", values: [[value]] }),
   });
+}
+
+export async function sendGmailMessage({ from = "", to = "", subject = "", message = "" }, tokenRef) {
+  const recipients = String(to || "").split(",").map((item) => item.trim()).filter(Boolean);
+  if (!recipients.length) throw new Error("Falta al menos un correo receptor");
+
+  const headers = [
+    from ? `From: ${sanitizeEmailHeader(from)}` : "",
+    `To: ${recipients.map(sanitizeEmailHeader).join(", ")}`,
+    `Subject: ${encodeMimeHeader(subject || "Prueba de correo")}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+  ].filter(Boolean);
+  const mime = `${headers.join("\r\n")}\r\n\r\n${message || ""}`;
+  const url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+
+  return googleFetch(url, tokenRef, {
+    method: "POST",
+    body: JSON.stringify({ raw: toBase64Url(mime) }),
+  });
+}
+
+function sanitizeEmailHeader(value) {
+  return String(value || "").replace(/[\r\n]/g, "").trim();
+}
+
+function encodeMimeHeader(value) {
+  return `=?UTF-8?B?${toBase64(String(value || "").replace(/[\r\n]/g, " "))}?=`;
+}
+
+function toBase64Url(value) {
+  return toBase64(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function toBase64(value) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
 }
 
 function mergeHeaders(existingHeaders, requiredHeaders) {

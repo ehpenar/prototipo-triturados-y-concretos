@@ -16,7 +16,7 @@ export const CONFIG = {
     clientSecret: envValue("VITE_GOOGLE_CLIENT_SECRET"),
     projectId: envValue("VITE_GOOGLE_PROJECT_ID") || "travel-463105",
     apiKey: envValue("VITE_GOOGLE_API_KEY"),
-    scopes: "https://www.googleapis.com/auth/spreadsheets",
+    scopes: "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/gmail.send",
   },
   openai: {
     apiKey: envValue("VITE_OPENAI_API_KEY") || storedValue("operation_ai_openai_api_key"),

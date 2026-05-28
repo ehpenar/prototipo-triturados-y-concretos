@@ -54,21 +54,31 @@ VITE_GOOGLE_CLIENT_ID=...
 
 ## Google Sheets configurados
 
-- Matriz de Seguimiento: https://docs.google.com/spreadsheets/d/1Hh4p4ydxmfT1BHC3E8YLoluXVUOBZvOfUKT-yR3tjrI/edit?gid=1301505875#gid=1301505875
-- Ordenes de Trabajo TYC: https://docs.google.com/spreadsheets/d/1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME/edit?gid=1862269386#gid=1862269386
-- Reporte de Actividades Mantenimiento: https://docs.google.com/spreadsheets/d/1PZCi-L47ltwrJXGdwF1gjWj7fZHdeFeS_MDwS8cpS3A/edit?gid=1575504867#gid=1575504867
-- Resumen Financiero OTS: https://docs.google.com/spreadsheets/d/1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ/edit?gid=0#gid=0
+- Copia de Matriz de Seguimiento (respuestas): https://docs.google.com/spreadsheets/d/1Hh4p4ydxmfT1BHC3E8YLoluXVUOBZvOfUKT-yR3tjrI/edit?gid=1301505875#gid=1301505875
+- Copia de ORDENES DE TRABAJO TYC: https://docs.google.com/spreadsheets/d/1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME/edit?gid=1862269386#gid=1862269386
+- Copia de REPORTE DE ACTIVIDADES MANTENIMIENTO (respuestas): https://docs.google.com/spreadsheets/d/1PZCi-L47ltwrJXGdwF1gjWj7fZHdeFeS_MDwS8cpS3A/edit?gid=1575504867#gid=1575504867
+- HOJA RESUMEN FINANCIERO OTS: https://docs.google.com/spreadsheets/d/1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ/edit?usp=sharing&utm_source=chatgpt.com&urp=gmail_link
+
+## Cambios operativos recientes
+
+- La vista `Dashboard` calcula `Filas OT` usando solo la columna `OT` de `Copia de ORDENES DE TRABAJO TYC`, en la pestana `gid=1862269386`.
+- La vista `Ver detalle` incluye generacion de informes por OT con IA. El informe toma la fila financiera correspondiente en `HOJA RESUMEN FINANCIERO OTS / Hoja 2`, usa `MANO OBRA`, `DETALLE_MANO_OBRA`, tiempos, ordenes de compra y SP relacionadas, y guarda el resultado en la columna `S` (`INFORME`).
+- `Ver detalle` muestra una seccion `Reporte de actividades (Facturacion)` agrupada por la llave `OT`, tomada de la hoja `FACTURACION` del archivo de actividades. Incluye colaborador, proceso facturado, equipo intervenido, OT reporte de campo, horometro/kilometraje, actividad realizada y repuestos utilizados.
+- El resumen financiero llena la columna existente `NUMERO DE COLABORADORES` con formato multilinea: `Numero : N` seguido por los colaboradores unicos vinculados a la OT.
+- En `Registros > Editar`, la seccion `Asociar registro` permite seleccionar multiples receptores configurados en `Email y Telegram`, agregar correos extra y guardar esos destinatarios en la asociacion.
+- Los cambios en columnas `ESTADO` se monitorean globalmente. Cuando la app sincroniza y detecta un estado distinto al ultimo observado, envia un correo automatico a los receptores configurados.
+- Los recordatorios por email siguen disponibles: `Diario` se envia a las 12:00, `Semanal` se envia los viernes a las 12:00 y `Cambio de estado` envia una plantilla con estado anterior y nuevo.
 
 ## Integraciones
 
 - Google Sheets se lee con Google Sheets API y OAuth en navegador.
-- Las fuentes iniciales estan en `src/App.jsx`.
+- Las fuentes iniciales estan en `src/constants/config.js`.
 - La capa IA usa OpenAI Chat Completions desde `src/App.jsx` para prueba.
 - El `client_secret` queda guardado solo como dato de configuracion para migrarlo luego a backend; el login OAuth del navegador usa `client_id`.
 - La lectura de Sheets usa `values:batchGet` para traer todas las pestanas detectadas del documento.
 - La edicion usa Google Sheets API: `values.update`, `values.append` y `batchUpdate` para crear hojas.
 - Telegram puede enviarse directo en prueba o mediante `netlify/functions/send-telegram.js`.
-- Email automatico queda preparado con `netlify/functions/send-email.js` usando SendGrid.
+- Email automatico y pruebas de correo usan Gmail API directamente desde el navegador con OAuth. El scope requerido es `https://www.googleapis.com/auth/gmail.send`.
 
 ## Variables Netlify opcionales
 

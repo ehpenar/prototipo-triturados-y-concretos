@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { sendTelegramMessage } from "../utils/ai.js";
+import { sendGmailMessage } from "../utils/googleSheets.js";
 
-export function Integrations({ config, setConfig }) {
+export function Integrations({ config, setConfig, tokenRef }) {
   const update = (field, value) => setConfig((current) => ({ ...current, [field]: value }));
   const [emailDraft, setEmailDraft] = useState({ email: "", role: "receiver" });
   const [testStatus, setTestStatus] = useState("");
@@ -38,6 +39,21 @@ export function Integrations({ config, setConfig }) {
 
   const removeEmailAccount = (email) => {
     saveEmailAccounts(emailAccounts.filter((account) => account.email !== email));
+  };
+
+  const testEmail = async () => {
+    setTestStatus("Enviando prueba por Gmail...");
+    try {
+      await sendGmailMessage({
+        from: config.senderEmail,
+        to: receiverAccounts.map((account) => account.email).join(", "),
+        subject: config.subject || "Prueba de correo operacional",
+        message: "Prueba de correo desde la plataforma operacional. Si recibes este mensaje, Gmail API esta funcionando.",
+      }, tokenRef);
+      setTestStatus("Prueba de email enviada por Gmail");
+    } catch (error) {
+      setTestStatus(`Error Email: ${error.message}`);
+    }
   };
 
   const testTelegram = async () => {
@@ -116,8 +132,12 @@ export function Integrations({ config, setConfig }) {
               Mensaje base
               <textarea value={config.emailMessage} onChange={(event) => update("emailMessage", event.target.value)} />
             </label>
+            <button disabled={!receiverAccounts.length} type="button" onClick={testEmail}>
+              Enviar prueba email
+            </button>
           </div>
-          <p className="note">El envio real de correo necesita una Netlify Function o backend SMTP. La configuracion queda lista para ese paso.</p>
+          {testStatus && <p className="note">{testStatus}</p>}
+          <p className="note">El envio real de correo usa Gmail API con la cuenta Google autorizada en la app. Si Google lo solicita, acepta el permiso para enviar correo.</p>
         </section>
         <section className="panel">
           <h2>Telegram</h2>

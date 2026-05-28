@@ -23,6 +23,7 @@ export function Records({
   documents,
   filters,
   notes,
+  notificationConfig,
   records,
   setFilters,
   setNotes,
@@ -345,6 +346,7 @@ export function Records({
                 record={selectedRecord}
                 records={targetRecords}
                 notes={notes}
+                notificationConfig={notificationConfig}
                 otOptions={otOptions}
                 setNotes={setNotes}
                 tokenRef={tokenRef}
@@ -1138,11 +1140,47 @@ function isOtHeader(header) {
   return normalizeText(header) === "ot";
 }
 
-function RecordSidePanel({ record, records, notes, otOptions, setNotes, tokenRef, onClose, onSaved }) {
+function getRecordStatusForReminder(record) {
+  const statusHeader = record?.headers?.find((header) => normalizeText(header) === "estado");
+  return String(record?.cells?.[statusHeader] || record?.normalized?.status || "").trim();
+}
+
+function getDefaultEmailRecipients(config) {
+  return getReceiverEmails(config).join(", ");
+}
+
+function getReceiverEmails(config) {
+  const accounts = Array.isArray(config?.emailAccounts) ? config.emailAccounts : [];
+  const receivers = accounts
+    .filter((account) => account?.role === "receiver" && account.email)
+    .map((account) => account.email.trim())
+    .filter(Boolean);
+  if (receivers.length) return [...new Set(receivers)];
+  return String(config?.recipients || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function recipientsToList(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function listToRecipients(values) {
+  return [...new Set(values.map((item) => item.trim()).filter(Boolean))].join(", ");
+}
+
+function RecordSidePanel({ record, records, notes, notificationConfig, otOptions, setNotes, tokenRef, onClose, onSaved }) {
   const headers = record?.headers || [];
   const currentOt = getRecordOt(record);
+  const receiverEmails = getReceiverEmails(notificationConfig);
+  const defaultRecipients = getDefaultEmailRecipients(notificationConfig);
   const [draft, setDraft] = useState(record?.cells || {});
   const [status, setStatus] = useState("");
+  const [extraRecipient, setExtraRecipient] = useState("");
   const [noteDraft, setNoteDraft] = useState({
     title: "",
     detail: "",
@@ -1152,14 +1190,19 @@ function RecordSidePanel({ record, records, notes, otOptions, setNotes, tokenRef
     frequency: "Fecha especifica",
     channel: "Plataforma",
     trigger: "Manual",
+    recipients: defaultRecipients,
   });
   const dirty = record && JSON.stringify(draft) !== JSON.stringify(record.cells);
 
   useEffect(() => {
     setDraft(record?.cells || {});
-    setNoteDraft((current) => ({ ...current, associatedOt: getRecordOt(record) }));
+    setNoteDraft((current) => ({
+      ...current,
+      associatedOt: getRecordOt(record),
+      recipients: defaultRecipients,
+    }));
     setStatus("");
-  }, [record]);
+  }, [defaultRecipients, record]);
 
   if (!record) {
     return (
@@ -1190,6 +1233,7 @@ function RecordSidePanel({ record, records, notes, otOptions, setNotes, tokenRef
         ...noteDraft,
         title: noteDraft.title.trim() || `Asociacion ${associatedOt}`,
         associatedOt,
+        initialStatus: getRecordStatusForReminder(associatedRecord),
         recordId: associatedRecord.uid,
         recordLabel: `${associatedOt} / ${associatedRecord.sourceName} / ${associatedRecord.sheetName} / fila ${associatedRecord.rowNumber}`,
         updatedAt: new Date().toISOString(),
@@ -1214,10 +1258,31 @@ function RecordSidePanel({ record, records, notes, otOptions, setNotes, tokenRef
       frequency: "Fecha especifica",
       channel: "Plataforma",
       trigger: "Manual",
+      recipients: defaultRecipients,
     });
   };
 
   const recordNotes = notes.filter((n) => n.recordId === record.uid || n.associatedOt === currentOt);
+  const selectedRecipients = recipientsToList(noteDraft.recipients);
+  const toggleRecipient = (email) => {
+    setNoteDraft((current) => {
+      const currentRecipients = recipientsToList(current.recipients);
+      const exists = currentRecipients.some((item) => item.toLowerCase() === email.toLowerCase());
+      const nextRecipients = exists
+        ? currentRecipients.filter((item) => item.toLowerCase() !== email.toLowerCase())
+        : [...currentRecipients, email];
+      return { ...current, recipients: listToRecipients(nextRecipients) };
+    });
+  };
+  const addExtraRecipient = () => {
+    const email = extraRecipient.trim();
+    if (!email) return;
+    setNoteDraft((current) => ({
+      ...current,
+      recipients: listToRecipients([...recipientsToList(current.recipients), email]),
+    }));
+    setExtraRecipient("");
+  };
 
   return (
     <aside className="panel record-side-panel">
@@ -1293,6 +1358,41 @@ function RecordSidePanel({ record, records, notes, otOptions, setNotes, tokenRef
               <option>Email y Telegram</option>
             </select>
           </div>
+          <div className="wide-field">
+            <span>Destinatarios</span>
+            <div style={{ display: "grid", gap: "8px", marginTop: "6px" }}>
+              {!receiverEmails.length ? (
+                <p className="note" style={{ margin: 0 }}>
+                  No hay receptores configurados en Email y Telegram.
+                </p>
+              ) : (
+                receiverEmails.map((email) => (
+                  <label key={`record-recipient-${email}`} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+                    <input
+                      checked={selectedRecipients.some((item) => item.toLowerCase() === email.toLowerCase())}
+                      type="checkbox"
+                      onChange={() => toggleRecipient(email)}
+                    />
+                    {email}
+                  </label>
+                ))
+              )}
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <input
+                  placeholder="Agregar otro correo"
+                  type="email"
+                  value={extraRecipient}
+                  onChange={(event) => setExtraRecipient(event.target.value)}
+                />
+                <button type="button" onClick={addExtraRecipient}>
+                  Agregar
+                </button>
+              </div>
+              <p className="note" style={{ margin: 0 }}>
+                Seleccionados: {noteDraft.recipients || "ninguno"}
+              </p>
+            </div>
+          </div>
           <button type="submit">Asociar OT</button>
         </form>
         <div className="list compact-list">
@@ -1300,7 +1400,7 @@ function RecordSidePanel({ record, records, notes, otOptions, setNotes, tokenRef
             <article className="item" key={`record-note-${note.id}-${index}`}>
               <strong>{note.title}</strong>
               <small>
-                {note.associatedOt || currentOt} / {note.startDate || "sin inicio"} - {note.endDate || "sin fin"} / {note.frequency} / {note.trigger} / {note.channel}
+                {note.associatedOt || currentOt} / {note.startDate || "sin inicio"} - {note.endDate || "sin fin"} / {note.frequency} / {note.trigger} / {note.channel} / {note.recipients || "sin destinatarios"}
               </small>
               <p className="muted">{note.detail}</p>
             </article>

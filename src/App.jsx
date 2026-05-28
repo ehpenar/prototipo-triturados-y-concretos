@@ -8,7 +8,7 @@ import {
   normalizeText,
   extractSpreadsheetId,
 } from "./utils/helpers.js";
-import { loadSpreadsheet, upsertSheetRows } from "./utils/googleSheets.js";
+import { loadSpreadsheet, sendGmailMessage, upsertSheetRows } from "./utils/googleSheets.js";
 import { detectRelations, detectAnomalies } from "./utils/analysis.js";
 import {
   FINANCIAL_SUMMARY_HEADERS,
@@ -65,6 +65,10 @@ function App() {
   );
   const tokenRef = useRef(localStorage.getItem("google_access_token") || "");
   const syncInProgressRef = useRef(false);
+  const reminderSendInProgressRef = useRef(false);
+  const globalStatusSendInProgressRef = useRef(false);
+  const reminderStateRef = useRef(loadStored("operation_ai_reminder_delivery_state", {}));
+  const globalStatusStateRef = useRef(loadStored("operation_ai_global_status_state", {}));
 
   const filteredRecords = useMemo(() => {
     const query = normalizeText(search);
@@ -122,9 +126,165 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollInterval, sources]);
 
+  useEffect(() => {
+    const runReminderChecks = () => processEmailReminders();
+    runReminderChecks();
+    const timer = setInterval(runReminderChecks, 60000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notes, records, notificationConfig]);
+
+  useEffect(() => {
+    processGlobalStatusChanges();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, notificationConfig]);
+
   const addLog = (message) => {
     setSyncLog((current) => [`[${new Date().toLocaleTimeString("es-CO")}] ${message}`, ...current].slice(0, 80));
   };
+
+  const saveReminderState = () => {
+    saveStored("operation_ai_reminder_delivery_state", reminderStateRef.current);
+  };
+
+  const saveGlobalStatusState = () => {
+    saveStored("operation_ai_global_status_state", globalStatusStateRef.current);
+  };
+
+  async function processGlobalStatusChanges() {
+    if (globalStatusSendInProgressRef.current || !records.length) return;
+    const recipients = getConfiguredEmailRecipients(notificationConfig);
+    if (!recipients) {
+      initializeGlobalStatusBaseline(records);
+      return;
+    }
+
+    const currentStatuses = buildStatusSnapshot(records);
+    const previousStatuses = globalStatusStateRef.current || {};
+    const hasPreviousBaseline = Object.keys(previousStatuses).length > 0;
+
+    if (!hasPreviousBaseline) {
+      globalStatusStateRef.current = currentStatuses;
+      saveGlobalStatusState();
+      return;
+    }
+
+    const changes = [];
+    Object.entries(currentStatuses).forEach(([key, item]) => {
+      const previous = previousStatuses[key];
+      if (!previous) return;
+      if (normalizeText(previous.status) !== normalizeText(item.status)) {
+        changes.push({ ...item, previousStatus: previous.status });
+      }
+    });
+
+    globalStatusStateRef.current = { ...previousStatuses, ...currentStatuses };
+    saveGlobalStatusState();
+    if (!changes.length) return;
+
+    globalStatusSendInProgressRef.current = true;
+    try {
+      for (const change of changes) {
+        try {
+          await sendGmailMessage({
+            from: notificationConfig.senderEmail,
+            to: recipients,
+            subject: `Cambio de estado OT ${change.ot || ""}`.trim(),
+            message: buildAutomaticStatusChangeMessage(change),
+          }, tokenRef);
+          addLog(`Cambio de ESTADO enviado por email: ${change.ot || change.recordLabel}.`);
+        } catch (error) {
+          addLog(`Error enviando cambio de ESTADO: ${error.message}`);
+        }
+      }
+    } finally {
+      globalStatusSendInProgressRef.current = false;
+    }
+  }
+
+  function initializeGlobalStatusBaseline(currentRecords) {
+    const currentStatuses = buildStatusSnapshot(currentRecords);
+    if (!Object.keys(globalStatusStateRef.current || {}).length && Object.keys(currentStatuses).length) {
+      globalStatusStateRef.current = currentStatuses;
+      saveGlobalStatusState();
+    }
+  }
+
+  async function processEmailReminders() {
+    if (reminderSendInProgressRef.current || !records.length || !notes.length) return;
+    const activeEmailNotes = notes.filter((note) => noteUsesEmail(note) && String(note.recipients || "").trim());
+    if (!activeEmailNotes.length) return;
+
+    reminderSendInProgressRef.current = true;
+    try {
+      const now = new Date();
+      for (const note of activeEmailNotes) {
+        const record = findRecordForReminder(records, note);
+        const currentStatus = getRecordStatus(record);
+        if (shouldTrackStatus(note)) {
+          await processStatusChangeReminder(note, currentStatus, record, now);
+          continue;
+        }
+        if (shouldSendScheduledReminder(note, now)) {
+          await processScheduledReminder(note, record, now);
+        }
+      }
+    } finally {
+      reminderSendInProgressRef.current = false;
+    }
+  }
+
+  async function processScheduledReminder(note, record, now) {
+    const deliveryKey = buildScheduledDeliveryKey(note, now);
+    if (!deliveryKey || reminderStateRef.current[note.id]?.lastScheduledKey === deliveryKey) return;
+    await sendReminderEmail(note, record, "recordatorio_programado");
+    reminderStateRef.current[note.id] = {
+      ...(reminderStateRef.current[note.id] || {}),
+      lastScheduledKey: deliveryKey,
+      lastScheduledAt: now.toISOString(),
+    };
+    saveReminderState();
+    addLog(`Recordatorio enviado por email: ${note.title || note.associatedOt || "sin titulo"}.`);
+  }
+
+  async function processStatusChangeReminder(note, currentStatus, record, now) {
+    const noteState = reminderStateRef.current[note.id] || {};
+    if (!currentStatus) return;
+    const previousBaseline = noteState.lastObservedStatus || note.initialStatus || "";
+    if (!previousBaseline) {
+      reminderStateRef.current[note.id] = { ...noteState, lastObservedStatus: currentStatus };
+      saveReminderState();
+      return;
+    }
+    if (normalizeText(previousBaseline) === normalizeText(currentStatus)) {
+      if (!noteState.lastObservedStatus) {
+        reminderStateRef.current[note.id] = { ...noteState, lastObservedStatus: currentStatus };
+        saveReminderState();
+      }
+      return;
+    }
+    const previousStatus = previousBaseline;
+    await sendReminderEmail(note, record, "cambio_estado", { previousStatus, currentStatus });
+    reminderStateRef.current[note.id] = {
+      ...noteState,
+      lastObservedStatus: currentStatus,
+      lastStatusEmailAt: now.toISOString(),
+    };
+    saveReminderState();
+    addLog(`Cambio de estado notificado por email: ${note.associatedOt || note.title}.`);
+  }
+
+  async function sendReminderEmail(note, record, kind, statusInfo = {}) {
+    const subject = kind === "cambio_estado"
+      ? `Cambio de estado ${note.associatedOt || ""}`.trim()
+      : note.title || notificationConfig.subject || "Recordatorio operacional";
+    await sendGmailMessage({
+      from: notificationConfig.senderEmail,
+      to: note.recipients,
+      subject,
+      message: buildReminderEmailMessage(note, record, kind, statusInfo),
+    }, tokenRef);
+  }
 
   async function syncAll(sourceList = sources, allowAuthPrompt = false, automatic = false) {
     if (syncInProgressRef.current) {
@@ -331,6 +491,7 @@ function App() {
             documents={documents}
             filters={filters}
             notes={notes}
+            notificationConfig={notificationConfig}
             records={filteredRecords}
             setFilters={setFilters}
             setNotes={setNotes}
@@ -388,7 +549,7 @@ function App() {
         )}
 
         {activeView === "integrations" && (
-          <Integrations config={notificationConfig} setConfig={setNotificationConfig} />
+          <Integrations config={notificationConfig} setConfig={setNotificationConfig} tokenRef={tokenRef} />
         )}
 
         {activeView === "assistant" && (
@@ -412,6 +573,145 @@ function App() {
       </main>
     </div>
   );
+}
+
+function noteUsesEmail(note) {
+  const channel = normalizeText(note?.channel);
+  return channel === "email" || channel === "email y telegram";
+}
+
+function getConfiguredEmailRecipients(config) {
+  const accounts = Array.isArray(config?.emailAccounts) ? config.emailAccounts : [];
+  const receiverEmails = accounts
+    .filter((account) => account?.role === "receiver" && account.email)
+    .map((account) => account.email.trim())
+    .filter(Boolean);
+  if (receiverEmails.length) return [...new Set(receiverEmails)].join(", ");
+  return String(config?.recipients || "").trim();
+}
+
+function buildStatusSnapshot(records) {
+  return records.reduce((snapshot, record) => {
+    const status = getRecordStatus(record);
+    if (!status) return snapshot;
+    const key = getRecordStatusKey(record);
+    snapshot[key] = {
+      status,
+      ot: getRecordOtFromRecord(record),
+      recordLabel: `${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}`,
+    };
+    return snapshot;
+  }, {});
+}
+
+function getRecordStatusKey(record) {
+  return `${record.sourceId}:${record.sheetName}:${record.rowNumber}`;
+}
+
+function shouldTrackStatus(note) {
+  return normalizeText(note?.frequency) === "por cambio de estado" || normalizeText(note?.trigger) === "cambio de estado";
+}
+
+function shouldSendScheduledReminder(note, now) {
+  const frequency = normalizeText(note?.frequency);
+  if (!isNoonWindow(now)) return false;
+  if (frequency === "diario") return true;
+  if (frequency === "semanal") return now.getDay() === 5;
+  if (frequency === "fecha especifica") return isSameDate(note.date, now);
+  return false;
+}
+
+function isNoonWindow(date) {
+  return date.getHours() === 12;
+}
+
+function isSameDate(value, date) {
+  if (!value) return false;
+  const target = new Date(value);
+  if (Number.isNaN(target.getTime())) return false;
+  return target.getFullYear() === date.getFullYear() &&
+    target.getMonth() === date.getMonth() &&
+    target.getDate() === date.getDate() &&
+    date.getHours() === 12;
+}
+
+function buildScheduledDeliveryKey(note, date) {
+  const frequency = normalizeText(note?.frequency);
+  if (frequency === "diario") return `${note.id}:daily:${dateKey(date)}`;
+  if (frequency === "semanal" && date.getDay() === 5) return `${note.id}:weekly:${weekKey(date)}`;
+  if (frequency === "fecha especifica" && isSameDate(note.date, date)) return `${note.id}:once:${dateKey(date)}`;
+  return "";
+}
+
+function dateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function weekKey(date) {
+  const firstDay = new Date(date.getFullYear(), 0, 1);
+  const dayOffset = Math.floor((date - firstDay) / 86400000);
+  return `${date.getFullYear()}-${Math.ceil((dayOffset + firstDay.getDay() + 1) / 7)}`;
+}
+
+function findRecordForReminder(records, note) {
+  const targetOt = normalizeOtForReminder(note?.associatedOt);
+  if (!targetOt) return null;
+  return records.find((record) => normalizeOtForReminder(getRecordOtFromRecord(record)) === targetOt) || null;
+}
+
+function getRecordOtFromRecord(record) {
+  if (!record) return "";
+  const otHeader = record.headers?.find((header) => normalizeText(header) === "ot");
+  return String(record.cells?.[otHeader] || record.normalized?.work_order || "").trim();
+}
+
+function getRecordStatus(record) {
+  if (!record) return "";
+  const statusHeader = record.headers?.find((header) => normalizeText(header) === "estado");
+  return String(record.cells?.[statusHeader] || record.normalized?.status || "").trim();
+}
+
+function normalizeOtForReminder(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/(?:OT\s*[-:]?\s*)?(\d+)/i);
+  return match ? String(Number(match[1])) : normalizeText(text);
+}
+
+function buildReminderEmailMessage(note, record, kind, statusInfo = {}) {
+  if (kind === "cambio_estado") {
+    return [
+      "Notificacion de cambio de estado",
+      "",
+      `OT: ${note.associatedOt || "NO ESPECIFICADO"}`,
+      `Estado anterior: ${statusInfo.previousStatus || "NO ESPECIFICADO"}`,
+      `Estado nuevo: ${statusInfo.currentStatus || "NO ESPECIFICADO"}`,
+      "",
+      `Titulo: ${note.title || "NO ESPECIFICADO"}`,
+      `Detalle: ${note.detail || "Sin detalle"}`,
+      record ? `Registro: ${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}` : "",
+    ].filter(Boolean).join("\n");
+  }
+  return [
+    "Recordatorio operacional",
+    "",
+    `OT: ${note.associatedOt || "NO ESPECIFICADO"}`,
+    `Titulo: ${note.title || "NO ESPECIFICADO"}`,
+    `Detalle: ${note.detail || "Sin detalle"}`,
+    `Frecuencia: ${note.frequency || "NO ESPECIFICADO"}`,
+    record ? `Estado actual: ${getRecordStatus(record) || "NO ESPECIFICADO"}` : "",
+    record ? `Registro: ${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function buildAutomaticStatusChangeMessage(change) {
+  return [
+    "Notificacion automatica de cambio de estado",
+    "",
+    `OT: ${change.ot || "NO ESPECIFICADO"}`,
+    `Estado anterior: ${change.previousStatus || "NO ESPECIFICADO"}`,
+    `Estado nuevo: ${change.status || "NO ESPECIFICADO"}`,
+    `Registro: ${change.recordLabel || "NO ESPECIFICADO"}`,
+  ].join("\n");
 }
 
 export default App;

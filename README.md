@@ -62,7 +62,9 @@ VITE_GOOGLE_CLIENT_ID=...
 ## Cambios operativos recientes
 
 - La vista `Dashboard` calcula `Filas OT` usando solo la columna `OT` de `Copia de ORDENES DE TRABAJO TYC`, en la pestana `gid=1862269386`.
+- La vista `Registros` permite filtrar por `OT` y tambien por `ESTADO` con las opciones `TERMINADO`, `REVISION`, `SIN REVISAR` y `SIN INICIAR`.
 - La vista `Ver detalle` incluye generacion de informes por OT con IA. El informe toma la fila financiera correspondiente en `HOJA RESUMEN FINANCIERO OTS / Hoja 2`, usa `MANO OBRA`, `DETALLE_MANO_OBRA`, tiempos, ordenes de compra y SP relacionadas, y guarda el resultado en la columna `S` (`INFORME`).
+- Despues de generar o cargar un informe en `Ver detalle`, la app permite enviarlo por correo. El usuario selecciona un emisor y uno o varios receptores previamente configurados en `Email y Telegram`; se envia solo el contenido del informe usando Gmail API.
 - `Ver detalle` muestra una seccion `Reporte de actividades (Facturacion)` agrupada por la llave `OT`, tomada de la hoja `FACTURACION` del archivo de actividades. Incluye colaborador, proceso facturado, equipo intervenido, OT reporte de campo, horometro/kilometraje, actividad realizada y repuestos utilizados.
 - El resumen financiero llena la columna existente `NUMERO DE COLABORADORES` con formato multilinea: `Numero : N` seguido por los colaboradores unicos vinculados a la OT.
 - En `Registros > Editar`, la seccion `Asociar registro` permite seleccionar multiples receptores configurados en `Email y Telegram`, agregar correos extra y guardar esos destinatarios en la asociacion.

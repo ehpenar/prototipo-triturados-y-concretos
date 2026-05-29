@@ -6,6 +6,7 @@ import {
   updateSheetCell,
   appendSheetRow,
   createSheetWithHeaders,
+  sendGmailMessage,
 } from "../utils/googleSheets.js";
 import { generateOtReport } from "../utils/ai.js";
 import { FINANCIAL_SUMMARY_SHEET } from "../utils/financialSummary.js";
@@ -17,6 +18,7 @@ const TARGET_SPREADSHEET_ID = "1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME";
 const TARGET_SHEET_ID = "1862269386";
 const FINANCIAL_SUMMARY_SPREADSHEET_ID = "1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ";
 const FINANCIAL_REPORT_COLUMN = "S";
+const RECORD_STATUS_OPTIONS = ["TERMINADO", "REVISION", "SIN REVISAR", "SIN INICIAR"];
 
 export function Records({
   addLog,
@@ -40,8 +42,12 @@ export function Records({
   const [showAppend, setShowAppend] = useState(false);
   const [showStructure, setShowStructure] = useState(false);
   const [otFilter, setOtFilter] = useState("");
+  const [estadoFilter, setEstadoFilter] = useState("");
   const [columnWidths, setColumnWidths] = useState({});
   const [reportStatus, setReportStatus] = useState("");
+  const [reportEmailStatus, setReportEmailStatus] = useState("");
+  const [reportEmailSender, setReportEmailSender] = useState("");
+  const [reportEmailRecipients, setReportEmailRecipients] = useState([]);
   const [otReports, setOtReports] = useState({});
   const targetRecords = useMemo(() => records, [records]);
   const otOptions = useMemo(() => {
@@ -50,9 +56,13 @@ export function Records({
   }, [sourceRecords]);
   const tableRecords = useMemo(() => {
     const query = normalizeText(otFilter);
-    if (!query) return targetRecords;
-    return targetRecords.filter((record) => normalizeText(getRecordOt(record)).includes(query));
-  }, [targetRecords, otFilter]);
+    const statusQuery = normalizeText(estadoFilter);
+    return targetRecords.filter((record) => {
+      const matchesOt = !query || normalizeText(getRecordOt(record)).includes(query);
+      const matchesStatus = !statusQuery || normalizeText(getRecordStatusForFilter(record)) === statusQuery;
+      return matchesOt && matchesStatus;
+    });
+  }, [targetRecords, otFilter, estadoFilter]);
   const headers = useMemo(() => tableRecords[0]?.headers || [], [tableRecords]);
   const totalPages = Math.max(1, Math.ceil(tableRecords.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -63,6 +73,8 @@ export function Records({
   const detailedReport = detailedRecord
     ? otReports[detailedRecord.uid] || getCell(detailedFinancialRecord, ["INFORME"], ["informe"])
     : "";
+  const reportSenderEmails = useMemo(() => getSenderEmails(notificationConfig), [notificationConfig]);
+  const reportReceiverEmails = useMemo(() => getReceiverEmails(notificationConfig), [notificationConfig]);
   const selectedSheet = useMemo(() => {
     const document = findFilteredDocument(documents, filters) || documents.find((item) => item.sheets.some((sheet) => isTargetSheet(sheet)));
     const sheet = findFilteredSheet(document, filters) || document?.sheets.find((item) => isTargetSheet(item)) || document?.sheets[0];
@@ -87,11 +99,17 @@ export function Records({
 
   useEffect(() => {
     setPage(1);
-  }, [filters, tableRecords.length, viewMode, otFilter]);
+  }, [filters, tableRecords.length, viewMode, otFilter, estadoFilter]);
 
   useEffect(() => {
     setReportStatus("");
+    setReportEmailStatus("");
   }, [detailedRecordId]);
+
+  useEffect(() => {
+    setReportEmailSender((current) => current || reportSenderEmails[0] || "");
+    setReportEmailRecipients(reportReceiverEmails);
+  }, [detailedRecordId, reportSenderEmails, reportReceiverEmails]);
 
   const generateReportForDetailedRecord = async () => {
     if (!detailedRecord) return;
@@ -119,6 +137,42 @@ export function Records({
       onSaved?.();
     } catch (error) {
       setReportStatus(`Error generando informe: ${error.message}`);
+    }
+  };
+
+  const toggleReportRecipient = (email) => {
+    setReportEmailRecipients((current) => {
+      const exists = current.some((item) => item.toLowerCase() === email.toLowerCase());
+      return exists
+        ? current.filter((item) => item.toLowerCase() !== email.toLowerCase())
+        : [...current, email];
+    });
+  };
+
+  const sendDetailedReportByEmail = async () => {
+    if (!detailedReport) {
+      setReportEmailStatus("Primero genera o carga un informe.");
+      return;
+    }
+    if (!reportEmailSender) {
+      setReportEmailStatus("Selecciona un correo emisor.");
+      return;
+    }
+    if (!reportEmailRecipients.length) {
+      setReportEmailStatus("Selecciona al menos un receptor.");
+      return;
+    }
+    setReportEmailStatus("Enviando informe por email...");
+    try {
+      await sendGmailMessage({
+        from: reportEmailSender,
+        to: reportEmailRecipients.join(", "),
+        subject: `Informe OT ${getRecordOt(detailedRecord) || ""}`.trim(),
+        message: detailedReport,
+      }, tokenRef);
+      setReportEmailStatus("Informe enviado por email.");
+    } catch (error) {
+      setReportEmailStatus(`Error enviando informe: ${error.message}`);
     }
   };
 
@@ -205,9 +259,25 @@ export function Records({
               ))}
             </datalist>
           </label>
+          <label className="ot-filter">
+            <span>Filtrar ESTADO</span>
+            <select value={estadoFilter} onChange={(event) => setEstadoFilter(event.target.value)}>
+              <option value="">Todos los estados</option>
+              {RECORD_STATUS_OPTIONS.map((status) => (
+                <option key={`estado-filter-${status}`} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </label>
           {otFilter && (
             <button type="button" onClick={() => setOtFilter("")}>
               Limpiar OT
+            </button>
+          )}
+          {estadoFilter && (
+            <button type="button" onClick={() => setEstadoFilter("")}>
+              Limpiar ESTADO
             </button>
           )}
         </div>
@@ -505,6 +575,56 @@ export function Records({
                   </h3>
                   <div style={{ whiteSpace: "pre-wrap", fontSize: "13px", lineHeight: "1.55", color: "var(--ink)" }}>
                     {detailedReport}
+                  </div>
+                </div>
+              )}
+
+              {detailedReport && (
+                <div style={{ background: "#f8fafc", border: "1px solid var(--line)", borderRadius: "12px", padding: "20px" }}>
+                  <h3 style={{ margin: "0 0 12px 0", fontSize: "14px", color: "var(--ink)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700" }}>
+                    Enviar informe por correo
+                  </h3>
+                  <div style={{ display: "grid", gap: "14px" }}>
+                    <label>
+                      Correo emisor
+                      <select value={reportEmailSender} onChange={(event) => setReportEmailSender(event.target.value)}>
+                        {!reportSenderEmails.length && <option value="">No hay emisores configurados</option>}
+                        {reportSenderEmails.map((email) => (
+                          <option key={`report-sender-${email}`} value={email}>
+                            {email}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div>
+                      <span style={{ display: "block", marginBottom: "8px", fontSize: "12px", fontWeight: "700", color: "var(--muted)", textTransform: "uppercase" }}>
+                        Receptores
+                      </span>
+                      {!reportReceiverEmails.length ? (
+                        <p className="note" style={{ margin: 0 }}>
+                          No hay receptores configurados en Email y Telegram.
+                        </p>
+                      ) : (
+                        <div style={{ display: "grid", gap: "8px" }}>
+                          {reportReceiverEmails.map((email) => (
+                            <label key={`report-recipient-${email}`} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+                              <input
+                                checked={reportEmailRecipients.some((item) => item.toLowerCase() === email.toLowerCase())}
+                                type="checkbox"
+                                onChange={() => toggleReportRecipient(email)}
+                              />
+                              {email}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+                      <button disabled={!reportEmailSender || !reportEmailRecipients.length} type="button" onClick={sendDetailedReportByEmail}>
+                        Enviar informe
+                      </button>
+                      {reportEmailStatus && <span className="note">{reportEmailStatus}</span>}
+                    </div>
                   </div>
                 </div>
               )}
@@ -934,6 +1054,11 @@ function getRecordOt(record) {
   return String(record.cells?.[otHeader] || record.normalized?.work_order || "").trim();
 }
 
+function getRecordStatusForFilter(record) {
+  const statusHeader = record.headers?.find((header) => normalizeText(header) === "estado");
+  return String(record.cells?.[statusHeader] || record.normalized?.status || "").trim();
+}
+
 function findRecordByOt(records, ot) {
   const target = normalizeText(ot);
   return records.find((record) => normalizeText(getRecordOt(record)) === target);
@@ -1147,6 +1272,16 @@ function getRecordStatusForReminder(record) {
 
 function getDefaultEmailRecipients(config) {
   return getReceiverEmails(config).join(", ");
+}
+
+function getSenderEmails(config) {
+  const accounts = Array.isArray(config?.emailAccounts) ? config.emailAccounts : [];
+  const senders = accounts
+    .filter((account) => account?.role === "sender" && account.email)
+    .map((account) => account.email.trim())
+    .filter(Boolean);
+  if (senders.length) return [...new Set(senders)];
+  return config?.senderEmail ? [String(config.senderEmail).trim()].filter(Boolean) : [];
 }
 
 function getReceiverEmails(config) {

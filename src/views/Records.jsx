@@ -536,6 +536,16 @@ export function Records({
                 </h3>
                 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
+                  {/* Quien Solicita */}
+                  <div style={{ background: "var(--surface)", padding: "14px", borderRadius: "8px", border: "1px solid var(--line)", borderLeft: "4px solid #0f766e" }}>
+                    <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--muted)", fontWeight: "600" }}>
+                      QUIEN SOLICITA
+                    </span>
+                    <strong style={{ display: "block", fontSize: "16px", color: "var(--ink)", marginTop: "4px", textTransform: "uppercase" }}>
+                      {getCell(detailedFinancialRecord, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]) || getCell(detailedRecord, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]) || "NO ESPECIFICADO"}
+                    </strong>
+                  </div>
+
                   {/* Mano Obra */}
                   <div style={{ background: "var(--surface)", padding: "14px", borderRadius: "8px", border: "1px solid var(--line)", borderLeft: "4px solid var(--accent)" }}>
                     <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--muted)", fontWeight: "600" }}>
@@ -1111,6 +1121,9 @@ function extractGid(url) {
 
 function getCellValue(record, header, sourceRecords) {
   if (normalizeText(header) === normalizeText("ORDENES DE COMPRA")) {
+    if (normalizeText(record.sourceName).includes(normalizeText("Matriz de Seguimiento"))) {
+      return record.cells[header] ?? "";
+    }
     const currentOt = getRecordOt(record);
     if (!currentOt) return record.cells[header] ?? "";
     const matrixRecordsForOt = (sourceRecords || []).filter((rec) => {

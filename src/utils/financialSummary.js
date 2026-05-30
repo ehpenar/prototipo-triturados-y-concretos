@@ -23,6 +23,7 @@ export const FINANCIAL_SUMMARY_HEADERS = [
   "DETALLE_VALOR_COMPRA",
   "INFORME",
   "NUMERO DE COLABORADORES",
+  "QUIEN SOLICITA",
 ];
 
 const SOURCE_NAMES = {
@@ -108,6 +109,7 @@ function buildSummaryRow(order, context) {
     "METODO_VALOR_COMPRA": purchaseValue.method,
     "DETALLE_VALOR_COMPRA": purchaseValue.detail,
     "NUMERO DE COLABORADORES": collaborators,
+    "QUIEN SOLICITA": getCell(order, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]),
   };
 }
 

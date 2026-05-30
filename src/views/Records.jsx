@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { CONFIG } from "../constants/config.js";
-import { createId, extractSpreadsheetId, normalizeText } from "../utils/helpers.js";
+import { columnName, createId, extractSpreadsheetId, normalizeText } from "../utils/helpers.js";
 import {
   updateSheetRow,
   updateSheetCell,
@@ -17,7 +17,6 @@ const TARGET_RECORDS_SHEET = "copia de prueba respuestas de formulario 1";
 const TARGET_SPREADSHEET_ID = "1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME";
 const TARGET_SHEET_ID = "1862269386";
 const FINANCIAL_SUMMARY_SPREADSHEET_ID = "1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ";
-const FINANCIAL_REPORT_COLUMN = "S";
 const RECORD_STATUS_OPTIONS = ["TERMINADO", "REVISION", "SIN REVISAR", "SIN INICIAR"];
 
 export function Records({
@@ -70,6 +69,8 @@ export function Records({
   const selectedRecord = tableRecords.find((record) => record.uid === selectedRecordId) || null;
   const detailedRecord = tableRecords.find((record) => record.uid === detailedRecordId) || null;
   const detailedFinancialRecord = detailedRecord ? findFinancialReportTarget(detailedRecord, sourceRecords)?.record || detailedRecord : null;
+  const detailedWorkOrderRecord = detailedRecord ? findWorkOrderRecord(sourceRecords, getRecordOt(detailedRecord)) || detailedRecord : null;
+  const detailedWorkOrderFields = detailedWorkOrderRecord ? buildWorkOrderDetailFields(detailedWorkOrderRecord) : [];
   const detailedReport = detailedRecord
     ? otReports[detailedRecord.uid] || getCell(detailedFinancialRecord, ["INFORME"], ["informe"])
     : "";
@@ -121,19 +122,24 @@ export function Records({
     }
     setReportStatus("Generando informe...");
     try {
+      const reportColumn = getFinancialReportColumn(target.record);
+      if (!reportColumn) {
+        setReportStatus("No se encontro la columna INFORME en Hoja 2.");
+        return;
+      }
       const consolidatedData = buildOtReportPayload(detailedRecord, sourceRecords, target.record || detailedRecord);
       const report = await generateOtReport(consolidatedData);
       await updateSheetCell(
         target.spreadsheetId,
         FINANCIAL_SUMMARY_SHEET,
-        FINANCIAL_REPORT_COLUMN,
+        reportColumn,
         target.rowNumber,
         report,
         tokenRef,
       );
       setOtReports((current) => ({ ...current, [detailedRecord.uid]: report }));
-      setReportStatus(`Informe guardado en Hoja 2 columna ${FINANCIAL_REPORT_COLUMN}.`);
-      addLog?.(`Informe generado para OT ${ot || "NO ESPECIFICADO"} y guardado en columna ${FINANCIAL_REPORT_COLUMN}.`);
+      setReportStatus(`Informe guardado en Hoja 2 columna ${reportColumn} (INFORME).`);
+      addLog?.(`Informe generado para OT ${ot || "NO ESPECIFICADO"} y guardado en columna ${reportColumn} (INFORME).`);
       onSaved?.();
     } catch (error) {
       setReportStatus(`Error generando informe: ${error.message}`);
@@ -578,6 +584,23 @@ export function Records({
                 </div>
               </div>
 
+              {/* SECTION 1B: DATOS DE LA ORDEN DE TRABAJO */}
+              <div style={{ background: "#f8fafc", border: "1px solid var(--line)", borderRadius: "12px", padding: "20px" }}>
+                <h3 style={{ margin: "0 0 16px 0", fontSize: "14px", color: "var(--ink)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700" }}>
+                  🧾 Datos de la Orden de Trabajo (Copia de ORDENES DE TRABAJO TYC)
+                </h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
+                  {detailedWorkOrderFields.slice(0, 6).map((field) => (
+                    <ActivityField key={`ot-detail-${field.label}`} label={field.label} value={field.value} />
+                  ))}
+                </div>
+                <div style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
+                  {detailedWorkOrderFields.slice(6).map((field) => (
+                    <ActivityTextBlock key={`ot-detail-${field.label}`} label={field.label} value={field.value} />
+                  ))}
+                </div>
+              </div>
+
               {detailedReport && (
                 <div style={{ background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: "12px", padding: "20px" }}>
                   <h3 style={{ margin: "0 0 12px 0", fontSize: "14px", color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700" }}>
@@ -880,8 +903,10 @@ function ActivityTextBlock({ label, value }) {
 
 function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecord) {
   const ot = getRecordOt(otRecord) || "NO ESPECIFICADO";
+  const workOrderRecord = findWorkOrderRecord(sourceRecords, ot) || otRecord;
   const resumenFinanciero = recordToObject(financialRecord);
   const datosGeneralesOT = recordToObject(otRecord);
+  const datosOrdenTrabajoTYC = buildWorkOrderDetailObject(workOrderRecord);
   const solicitudesPedido = getRelatedMatrixRecords(sourceRecords, ot).map(buildSpReportItem);
   const ordenesCompra = [...new Set(solicitudesPedido.map((sp) => sp.ordenCompra).filter((value) => value && value !== "NO ESPECIFICADO"))].sort();
 
@@ -889,9 +914,11 @@ function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecor
     ot,
     fuente: {
       resumenFinanciero: "Resumen Financiero OTS / Hoja 2",
+      ordenTrabajo: "Copia de ORDENES DE TRABAJO TYC / Respuestas de formulario 1",
       matrizSeguimiento: "Copia de Matriz de Seguimiento / respuestas",
     },
     datosGeneralesOT,
+    datosOrdenTrabajoTYC,
     resumenFinanciero,
     metricas: {
       estadoGeneral: getCell(financialRecord, ["ESTATUS DE LA OT", "ESTADO", "Estado Actual de la SP*"]) || "NO ESPECIFICADO",
@@ -910,6 +937,42 @@ function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecor
     solicitudesPedido,
     informeExistente: getCell(otRecord, ["INFORME"], ["informe"]) || "NO ESPECIFICADO",
   };
+}
+
+function buildWorkOrderDetailFields(record) {
+  const detail = buildWorkOrderDetailObject(record);
+  return [
+    { label: "FECHA DE SOLICITUD", value: detail.fechaSolicitud },
+    { label: "LUGAR DE SOLICITUD", value: detail.lugarSolicitud },
+    { label: "QUIÉN SOLICITA", value: detail.quienSolicita },
+    { label: "ÁREA DE SOLICITUD", value: detail.areaSolicitud },
+    { label: "EQUIPO", value: detail.equipo },
+    { label: "FORMATO DE ACTIVIDADES", value: detail.formatoActividades },
+    { label: "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICITUD", value: detail.descripcionGeneralFalloSolicitud },
+    { label: "COMENTARIOS", value: detail.comentarios },
+  ];
+}
+
+function buildWorkOrderDetailObject(record) {
+  return {
+    fechaSolicitud: getWorkOrderDetailField(record, ["FECHA DE SOLICITUD", "Marca temporal"]),
+    lugarSolicitud: getWorkOrderDetailField(record, ["LUGAR DE SOLICITUD", "LUGAR"]),
+    quienSolicita: getWorkOrderDetailField(record, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]),
+    areaSolicitud: getWorkOrderDetailField(record, ["ÁREA DE SOLICITUD", "AREA DE SOLICITUD", "AREA"]),
+    equipo: getWorkOrderDetailField(record, ["EQUIPO"]),
+    formatoActividades: getWorkOrderDetailField(record, ["Por favor anexe el formato de actividades", "FORMATO DE ACTIVIDADES"]),
+    descripcionGeneralFalloSolicitud: getWorkOrderDetailField(record, [
+      "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICITUD",
+      "DESCRIPCION GENERAL DEL FALLO O DE LA SOLICITUD",
+      "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICTUD",
+      "DESCRIPCION GENERAL DEL FALLO O DE LA SOLICTUD",
+    ]),
+    comentarios: getWorkOrderDetailField(record, ["COMENTARIOS"]),
+  };
+}
+
+function getWorkOrderDetailField(record, names) {
+  return getCell(record, names) || "NO ESPECIFICADO";
 }
 
 function buildSpReportItem(spRecord, index) {
@@ -969,6 +1032,17 @@ function getRelatedMatrixRecords(sourceRecords, ot) {
   });
 }
 
+function findWorkOrderRecord(sourceRecords, ot) {
+  const targetOt = normalizeText(ot);
+  if (!targetOt) return null;
+  return (sourceRecords || []).find((rec) => {
+    const isWorkOrderSource = normalizeText(rec.sourceName).includes(normalizeText("Ordenes de Trabajo TYC"));
+    const isFormSheet = normalizeText(rec.sheetName).includes(normalizeText("respuestas de formulario 1"));
+    if (!isWorkOrderSource || !isFormSheet) return false;
+    return normalizeText(getRecordOt(rec)) === targetOt;
+  }) || null;
+}
+
 function getRelatedBillingRecords(sourceRecords, ot) {
   const targetOt = normalizeOtKey(ot);
   return (sourceRecords || []).filter((rec) => {
@@ -1021,6 +1095,11 @@ function findFinancialReportTarget(record, sourceRecords) {
   return matchingFinancialRecord
     ? { record: matchingFinancialRecord, spreadsheetId: FINANCIAL_SUMMARY_SPREADSHEET_ID, rowNumber: matchingFinancialRecord.rowNumber }
     : null;
+}
+
+function getFinancialReportColumn(record) {
+  const reportIndex = record?.headers?.findIndex((header) => normalizeText(header) === normalizeText("INFORME"));
+  return reportIndex >= 0 ? columnName(reportIndex + 1) : "";
 }
 
 function getMatrixField(matrixRecord, columnKeys) {
@@ -1189,6 +1268,7 @@ function countListElements(val) {
 
 function calculateHeaderTooltip(header, records, sourceRecords) {
   const norm = normalizeText(header);
+  const sourceDetail = buildHeaderSourceDetail(header, records);
   const isList = norm === "detalle cruce sp" || norm === "ordenes de compra" || norm === "detalle_cruce_sp" || norm === "ordenes_de_compra";
   if (isList) {
     let totalElements = 0;
@@ -1196,7 +1276,7 @@ function calculateHeaderTooltip(header, records, sourceRecords) {
       const val = getCellValue(rec, header, sourceRecords);
       totalElements += countListElements(val);
     });
-    return `Cantidad total de items: ${totalElements}`;
+    return `Cantidad total de items: ${totalElements}${sourceDetail}`;
   }
 
   const isNumeric = norm === "mano obra" || norm === "valor de la compra de la sp" || norm === "valor de la compra" || norm === "costo total" || norm === "mano_obra";
@@ -1214,7 +1294,7 @@ function calculateHeaderTooltip(header, records, sourceRecords) {
       }
     });
     const formattedSum = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(totalSum);
-    return `Total: ${formattedSum}\nCantidad de items: ${count}`;
+    return `Total: ${formattedSum}\nCantidad de items: ${count}${sourceDetail}`;
   }
 
   let count = 0;
@@ -1224,7 +1304,25 @@ function calculateHeaderTooltip(header, records, sourceRecords) {
       count += 1;
     }
   });
-  return `Cantidad de items: ${count}`;
+  return `Cantidad de items: ${count}${sourceDetail}`;
+}
+
+function buildHeaderSourceDetail(header, records) {
+  const sources = new Map();
+  records.forEach((record) => {
+    if (!record?.headers?.includes(header)) return;
+    const sourceName = record.sourceName || "Documento no especificado";
+    const sheetName = record.sheetName || "Hoja no especificada";
+    const key = `${sourceName} / ${sheetName}`;
+    if (!sources.has(key)) sources.set(key, { sourceName, sheetName });
+  });
+  if (!sources.size) return "";
+  const sourceLines = [...sources.values()]
+    .slice(0, 4)
+    .map((source) => `- ${source.sourceName} / ${source.sheetName} / columna ${header}`);
+  const remaining = sources.size - sourceLines.length;
+  if (remaining > 0) sourceLines.push(`- +${remaining} origenes adicionales`);
+  return `\nOrigen:\n${sourceLines.join("\n")}`;
 }
 
 function ResizableHeader({ header, onResizeStart, width, tooltip }) {

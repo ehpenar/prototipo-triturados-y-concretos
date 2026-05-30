@@ -108,6 +108,7 @@ export async function generateOtReport(consolidatedData) {
     "- Bullets cortos, sin relleno ni introducciones.",
     "- Resume observaciones largas conservando contexto técnico.",
     "- Consolida SP similares cuando sea posible.",
+    "- Usa datosOrdenTrabajoTYC como contexto operativo obligatorio: fecha, lugar, solicitante, area, equipo, formato de actividades, descripcion del fallo/solicitud y comentarios.",
     "",
     "FORMATO OBLIGATORIO:",
     "## 1. RESUMEN GENERAL OT",

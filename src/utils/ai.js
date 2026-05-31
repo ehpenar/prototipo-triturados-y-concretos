@@ -109,6 +109,7 @@ export async function generateOtReport(consolidatedData) {
     "- Resume observaciones largas conservando contexto técnico.",
     "- Consolida SP similares cuando sea posible.",
     "- Usa datosOrdenTrabajoTYC como contexto operativo obligatorio: fecha, lugar, solicitante, area, equipo, formato de actividades, descripcion del fallo/solicitud y comentarios.",
+    "- Considera metricas.valorCompraAgregarTotal como valor total de compras/materiales calculado desde Matriz de Seguimiento.",
     "",
     "FORMATO OBLIGATORIO:",
     "## 1. RESUMEN GENERAL OT",

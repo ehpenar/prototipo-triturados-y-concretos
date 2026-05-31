@@ -71,6 +71,8 @@ export function Records({
   const detailedFinancialRecord = detailedRecord ? findFinancialReportTarget(detailedRecord, sourceRecords)?.record || detailedRecord : null;
   const detailedWorkOrderRecord = detailedRecord ? findWorkOrderRecord(sourceRecords, getRecordOt(detailedRecord)) || detailedRecord : null;
   const detailedWorkOrderFields = detailedWorkOrderRecord ? buildWorkOrderDetailFields(detailedWorkOrderRecord) : [];
+  const detailedMatrixRecords = detailedRecord ? getRelatedMatrixRecords(sourceRecords, getRecordOt(detailedRecord)) : [];
+  const detailedMatrixPurchaseTotal = sumMatrixPurchaseValue(detailedMatrixRecords);
   const detailedReport = detailedRecord
     ? otReports[detailedRecord.uid] || getCell(detailedFinancialRecord, ["INFORME"], ["informe"])
     : "";
@@ -572,6 +574,19 @@ export function Records({
                     </span>
                   </div>
 
+                  {/* Valor Compra Agregar */}
+                  <div style={{ background: "var(--surface)", padding: "14px", borderRadius: "8px", border: "1px solid var(--line)", borderLeft: "4px solid #16a34a" }}>
+                    <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--muted)", fontWeight: "600" }}>
+                      TOTAL VALOR COMPRA (AGREGAR)
+                    </span>
+                    <strong style={{ display: "block", fontSize: "18px", color: "var(--ink)", marginTop: "4px" }}>
+                      {formatFinancialValue(detailedMatrixPurchaseTotal)}
+                    </strong>
+                    <span style={{ display: "block", fontSize: "11px", color: "var(--muted)", marginTop: "6px" }}>
+                      Matriz de Seguimiento / {detailedMatrixRecords.length} registros OT
+                    </span>
+                  </div>
+
                   {/* Informe */}
                   <div style={{ background: "var(--surface)", padding: "14px", borderRadius: "8px", border: "1px solid var(--line)", borderLeft: "4px solid #6366f1" }}>
                     <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--muted)", fontWeight: "600" }}>
@@ -907,7 +922,9 @@ function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecor
   const resumenFinanciero = recordToObject(financialRecord);
   const datosGeneralesOT = recordToObject(otRecord);
   const datosOrdenTrabajoTYC = buildWorkOrderDetailObject(workOrderRecord);
-  const solicitudesPedido = getRelatedMatrixRecords(sourceRecords, ot).map(buildSpReportItem);
+  const matrixRecords = getRelatedMatrixRecords(sourceRecords, ot);
+  const valorCompraAgregarTotal = sumMatrixPurchaseValue(matrixRecords);
+  const solicitudesPedido = matrixRecords.map(buildSpReportItem);
   const ordenesCompra = [...new Set(solicitudesPedido.map((sp) => sp.ordenCompra).filter((value) => value && value !== "NO ESPECIFICADO"))].sort();
 
   return {
@@ -929,6 +946,7 @@ function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecor
       tiempoCompra: getCell(financialRecord, ["TIEMPO DE COMPRA"]) || "NO ESPECIFICADO",
       tiempoAprobacion: getCell(financialRecord, ["TIEMPO APROBACION"]) || "NO ESPECIFICADO",
       valorCompraSP: getCell(financialRecord, ["VALOR DE LA COMPRA DE LA SP"]) || "NO ESPECIFICADO",
+      valorCompraAgregarTotal: valorCompraAgregarTotal || "NO ESPECIFICADO",
       detalleCruceSP: getCell(financialRecord, ["DETALLE_CRUCE_SP"]) || "NO ESPECIFICADO",
     },
     totalSP: solicitudesPedido.length,
@@ -955,24 +973,28 @@ function buildWorkOrderDetailFields(record) {
 
 function buildWorkOrderDetailObject(record) {
   return {
-    fechaSolicitud: getWorkOrderDetailField(record, ["FECHA DE SOLICITUD", "Marca temporal"]),
-    lugarSolicitud: getWorkOrderDetailField(record, ["LUGAR DE SOLICITUD", "LUGAR"]),
-    quienSolicita: getWorkOrderDetailField(record, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]),
-    areaSolicitud: getWorkOrderDetailField(record, ["ÁREA DE SOLICITUD", "AREA DE SOLICITUD", "AREA"]),
-    equipo: getWorkOrderDetailField(record, ["EQUIPO"]),
-    formatoActividades: getWorkOrderDetailField(record, ["Por favor anexe el formato de actividades", "FORMATO DE ACTIVIDADES"]),
+    fechaSolicitud: getWorkOrderDetailField(record, ["FECHA DE SOLICITUD", "FECHA SOLICITUD", "Marca temporal"], ["fecha de solicitud", "fecha solicitud", "marca temporal"]),
+    lugarSolicitud: getWorkOrderDetailField(record, ["LUGAR DE SOLICITUD", "LUGAR", "UBICACIÓN", "UBICACION"], ["lugar de solicitud", "lugar", "ubicacion"]),
+    quienSolicita: getWorkOrderDetailField(record, ["QUIEN SOLICITA", "QUIÉN SOLICITA", "NOMBRE DE QUIEN SOLICITA", "SOLICITANTE"], ["quien solicita", "solicitante"]),
+    areaSolicitud: getWorkOrderDetailField(record, ["ÁREA DE SOLICITUD", "AREA DE SOLICITUD", "ÁREA", "AREA", "PROCESO"], ["area de solicitud", "area", "proceso"]),
+    equipo: getWorkOrderDetailField(record, ["EQUIPO", "EQUIPO INTERVENIDO", "MAQUINA", "MÁQUINA", "ACTIVO"], ["equipo", "maquina", "activo"]),
+    formatoActividades: getWorkOrderDetailField(record, ["Por favor anexe el formato de actividades", "FORMATO DE ACTIVIDADES", "FORMATO ACTIVIDADES"], ["formato de actividades", "anexe el formato"]),
     descripcionGeneralFalloSolicitud: getWorkOrderDetailField(record, [
       "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICITUD",
       "DESCRIPCION GENERAL DEL FALLO O DE LA SOLICITUD",
       "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICTUD",
       "DESCRIPCION GENERAL DEL FALLO O DE LA SOLICTUD",
-    ]),
-    comentarios: getWorkOrderDetailField(record, ["COMENTARIOS"]),
+      "DESCRIPCIÓN GENERAL DEL FALLO",
+      "DESCRIPCION GENERAL DEL FALLO",
+      "DESCRIPCIÓN DE LA SOLICITUD",
+      "DESCRIPCION DE LA SOLICITUD",
+    ], ["descripcion general", "fallo", "solicitud"]),
+    comentarios: getWorkOrderDetailField(record, ["COMENTARIOS", "COMENTARIO", "OBSERVACIONES", "OBSERVACIÓN", "OBSERVACION"], ["comentarios", "comentario", "observacion"]),
   };
 }
 
-function getWorkOrderDetailField(record, names) {
-  return getCell(record, names) || "NO ESPECIFICADO";
+function getWorkOrderDetailField(record, names, containsNames = []) {
+  return getCell(record, names, containsNames) || "NO ESPECIFICADO";
 }
 
 function buildSpReportItem(spRecord, index) {
@@ -1023,23 +1045,34 @@ function compactValue(value, maxLength = 1200) {
 }
 
 function getRelatedMatrixRecords(sourceRecords, ot) {
-  const targetOt = normalizeText(ot);
+  const targetOt = normalizeOtKey(ot);
   return (sourceRecords || []).filter((rec) => {
     const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
     if (!isMatrix) return false;
     const matrixOt = getRecordOt(rec);
-    return matrixOt && normalizeText(matrixOt) === targetOt;
+    return matrixOt && normalizeOtKey(matrixOt) === targetOt;
   });
 }
 
+function sumMatrixPurchaseValue(matrixRecords) {
+  return roundMoney((matrixRecords || []).reduce((total, record) => (
+    total + parseFinancialMoney(getMatrixField(record, [
+      "VALOR COMPRA (AGREGAR)",
+      "VALOR COMPRA",
+      "VALOR DE COMPRA",
+      "VALOR DE LA COMPRA",
+    ]))
+  ), 0));
+}
+
 function findWorkOrderRecord(sourceRecords, ot) {
-  const targetOt = normalizeText(ot);
+  const targetOt = normalizeOtKey(ot);
   if (!targetOt) return null;
   return (sourceRecords || []).find((rec) => {
     const isWorkOrderSource = normalizeText(rec.sourceName).includes(normalizeText("Ordenes de Trabajo TYC"));
     const isFormSheet = normalizeText(rec.sheetName).includes(normalizeText("respuestas de formulario 1"));
     if (!isWorkOrderSource || !isFormSheet) return false;
-    return normalizeText(getRecordOt(rec)) === targetOt;
+    return normalizeOtKey(getRecordOt(rec)) === targetOt;
   }) || null;
 }
 
@@ -1254,6 +1287,15 @@ function parseFinancialMoney(value) {
     }
   }
   return Number(text) || 0;
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function formatFinancialValue(value) {
+  if (!value) return "0";
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value);
 }
 
 function countListElements(val) {

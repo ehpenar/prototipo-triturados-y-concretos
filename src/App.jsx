@@ -68,8 +68,10 @@ function App() {
   const syncInProgressRef = useRef(false);
   const reminderSendInProgressRef = useRef(false);
   const globalStatusSendInProgressRef = useRef(false);
+  const globalOtChangeSendInProgressRef = useRef(false);
   const reminderStateRef = useRef(loadStored("operation_ai_reminder_delivery_state", {}));
   const globalStatusStateRef = useRef(loadStored("operation_ai_global_status_state", {}));
+  const globalOtChangeStateRef = useRef(loadStored("operation_ai_global_ot_change_state", {}));
 
   const filteredRecords = useMemo(() => {
     const query = normalizeText(search);
@@ -137,6 +139,7 @@ function App() {
 
   useEffect(() => {
     processGlobalStatusChanges();
+    processGlobalOtFieldChanges();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [records, notificationConfig]);
 
@@ -150,6 +153,10 @@ function App() {
 
   const saveGlobalStatusState = () => {
     saveStored("operation_ai_global_status_state", globalStatusStateRef.current);
+  };
+
+  const saveGlobalOtChangeState = () => {
+    saveStored("operation_ai_global_ot_change_state", globalOtChangeStateRef.current);
   };
 
   async function processGlobalStatusChanges() {
@@ -208,6 +215,55 @@ function App() {
     if (!Object.keys(globalStatusStateRef.current || {}).length && Object.keys(currentStatuses).length) {
       globalStatusStateRef.current = currentStatuses;
       saveGlobalStatusState();
+    }
+  }
+
+  async function processGlobalOtFieldChanges() {
+    if (globalOtChangeSendInProgressRef.current || !records.length) return;
+    const recipients = getConfiguredEmailRecipients(notificationConfig);
+    const currentSnapshot = buildOtFieldSnapshot(records);
+    if (!recipients) {
+      initializeGlobalOtFieldBaseline(currentSnapshot);
+      return;
+    }
+
+    const previousSnapshot = globalOtChangeStateRef.current || {};
+    const hasPreviousBaseline = Object.keys(previousSnapshot).length > 0;
+    if (!hasPreviousBaseline) {
+      globalOtChangeStateRef.current = currentSnapshot;
+      saveGlobalOtChangeState();
+      return;
+    }
+
+    const changes = collectOtFieldChanges(previousSnapshot, currentSnapshot);
+    globalOtChangeStateRef.current = currentSnapshot;
+    saveGlobalOtChangeState();
+    if (!changes.length) return;
+
+    globalOtChangeSendInProgressRef.current = true;
+    try {
+      for (const change of changes) {
+        try {
+          await sendGmailMessage({
+            from: notificationConfig.senderEmail,
+            to: recipients,
+            subject: `Cambio en OT ${change.ot || ""}`.trim(),
+            message: buildAutomaticOtFieldChangeMessage(change),
+          }, tokenRef);
+          addLog(`Cambio en OT enviado por email: ${change.ot || change.recordLabel} / ${change.field}.`);
+        } catch (error) {
+          addLog(`Error enviando cambio en OT: ${error.message}`);
+        }
+      }
+    } finally {
+      globalOtChangeSendInProgressRef.current = false;
+    }
+  }
+
+  function initializeGlobalOtFieldBaseline(currentSnapshot) {
+    if (!Object.keys(globalOtChangeStateRef.current || {}).length && Object.keys(currentSnapshot).length) {
+      globalOtChangeStateRef.current = currentSnapshot;
+      saveGlobalOtChangeState();
     }
   }
 
@@ -619,6 +675,59 @@ function buildStatusSnapshot(records) {
   }, {});
 }
 
+function buildOtFieldSnapshot(records) {
+  return records.reduce((snapshot, record) => {
+    const ot = getRecordOtFromRecord(record);
+    if (!ot) return snapshot;
+    const key = getRecordStatusKey(record);
+    snapshot[key] = {
+      ot,
+      sourceName: record.sourceName || "",
+      sheetName: record.sheetName || "",
+      rowNumber: record.rowNumber || "",
+      recordLabel: `${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}`,
+      userResponsible: getRecordResponsibleUser(record),
+      fields: buildComparableRecordFields(record),
+    };
+    return snapshot;
+  }, {});
+}
+
+function buildComparableRecordFields(record) {
+  return (record.headers || []).reduce((fields, header) => {
+    if (normalizeText(header) === "estado") return fields;
+    fields[header] = normalizeComparableValue(record.cells?.[header]);
+    return fields;
+  }, {});
+}
+
+function collectOtFieldChanges(previousSnapshot, currentSnapshot) {
+  const changes = [];
+  Object.entries(currentSnapshot).forEach(([recordKey, current]) => {
+    const previous = previousSnapshot[recordKey];
+    if (!previous) return;
+    if (normalizeOtForReminder(previous.ot) !== normalizeOtForReminder(current.ot)) return;
+    Object.entries(current.fields || {}).forEach(([field, newValue]) => {
+      const previousFields = previous.fields || {};
+      if (!Object.prototype.hasOwnProperty.call(previousFields, field)) return;
+      const previousValue = previousFields[field];
+      if (normalizeComparableValue(previousValue) === normalizeComparableValue(newValue)) return;
+      changes.push({
+        ot: current.ot,
+        documentName: current.sourceName,
+        sheetName: current.sheetName,
+        field,
+        previousValue,
+        newValue,
+        changedAt: new Date().toLocaleString("es-CO"),
+        userResponsible: current.userResponsible || "NO DISPONIBLE",
+        recordLabel: current.recordLabel,
+      });
+    });
+  });
+  return changes;
+}
+
 function getRecordStatusKey(record) {
   return `${record.sourceId}:${record.sheetName}:${record.rowNumber}`;
 }
@@ -686,6 +795,33 @@ function getRecordStatus(record) {
   return String(record.cells?.[statusHeader] || record.normalized?.status || "").trim();
 }
 
+function getRecordResponsibleUser(record) {
+  if (!record) return "";
+  return getRecordCellByAliases(record, [
+    "USUARIO RESPONSABLE",
+    "RESPONSABLE",
+    "EDITADO POR",
+    "MODIFICADO POR",
+    "DIRECCIÓN DE CORREO ELECTRÓNICO",
+    "DIRECCION DE CORREO ELECTRONICO",
+    "CORREO ELECTRONICO",
+    "EMAIL",
+  ]);
+}
+
+function getRecordCellByAliases(record, aliases) {
+  for (const alias of aliases) {
+    const header = record.headers?.find((item) => normalizeText(item) === normalizeText(alias));
+    const value = header ? String(record.cells?.[header] || "").trim() : "";
+    if (value) return value;
+  }
+  return "";
+}
+
+function normalizeComparableValue(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
 function normalizeOtForReminder(value) {
   const text = String(value || "").trim();
   const match = text.match(/(?:OT\s*[-:]?\s*)?(\d+)/i);
@@ -727,6 +863,30 @@ function buildAutomaticStatusChangeMessage(change) {
     `Estado nuevo: ${change.status || "NO ESPECIFICADO"}`,
     `Registro: ${change.recordLabel || "NO ESPECIFICADO"}`,
   ].join("\n");
+}
+
+function buildAutomaticOtFieldChangeMessage(change) {
+  return [
+    "Notificacion automatica de cambio en OT",
+    "",
+    `OT: ${change.ot || "NO ESPECIFICADO"}`,
+    "",
+    `Documento: ${change.documentName || "NO ESPECIFICADO"}`,
+    `Hoja: ${change.sheetName || "NO ESPECIFICADO"}`,
+    "",
+    `Campo modificado: ${change.field || "NO ESPECIFICADO"}`,
+    `Valor anterior: ${formatChangeValue(change.previousValue)}`,
+    `Valor nuevo: ${formatChangeValue(change.newValue)}`,
+    "",
+    `Fecha del cambio: ${change.changedAt || "NO ESPECIFICADO"}`,
+    `Usuario responsable: ${change.userResponsible || "NO DISPONIBLE"}`,
+    change.recordLabel ? `Registro: ${change.recordLabel}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function formatChangeValue(value) {
+  const text = String(value ?? "").trim();
+  return text || "VACIO";
 }
 
 export default App;

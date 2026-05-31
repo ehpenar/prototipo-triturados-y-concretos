@@ -899,21 +899,45 @@ export function Records({
 }
 
 function ActivityField({ label, value }) {
+  const linkValue = normalizeUrlValue(value);
+  const isFormatActivitiesLink = normalizeText(label) === normalizeText("FORMATO DE ACTIVIDADES") && linkValue;
   return (
     <div>
       <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>{label}</span>
-      <strong style={{ color: "var(--ink)", textTransform: "uppercase" }}>{value || "NO ESPECIFICADO"}</strong>
+      {isFormatActivitiesLink ? (
+        <a href={linkValue} rel="noreferrer" style={{ color: "var(--accent)", fontWeight: "700", overflowWrap: "anywhere" }} target="_blank">
+          {value}
+        </a>
+      ) : (
+        <strong style={{ color: "var(--ink)", textTransform: "uppercase" }}>{value || "NO ESPECIFICADO"}</strong>
+      )}
     </div>
   );
 }
 
 function ActivityTextBlock({ label, value }) {
+  const linkValue = normalizeUrlValue(value);
+  const isFormatActivitiesLink = normalizeText(label) === normalizeText("FORMATO DE ACTIVIDADES") && linkValue;
   return (
     <div style={{ background: "#f8fafc", padding: "10px", borderRadius: "6px", fontSize: "12px" }}>
       <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase", marginBottom: "4px" }}>{label}</span>
-      <span style={{ color: "var(--ink)", lineHeight: "1.4", whiteSpace: "pre-wrap" }}>{value || "NO ESPECIFICADO"}</span>
+      {isFormatActivitiesLink ? (
+        <a href={linkValue} rel="noreferrer" style={{ color: "var(--accent)", lineHeight: "1.4", overflowWrap: "anywhere" }} target="_blank">
+          {value}
+        </a>
+      ) : (
+        <span style={{ color: "var(--ink)", lineHeight: "1.4", whiteSpace: "pre-wrap" }}>{value || "NO ESPECIFICADO"}</span>
+      )}
     </div>
   );
+}
+
+function normalizeUrlValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^https?:\/\/\S+$/i.test(text)) return text;
+  if (/^www\.\S+$/i.test(text)) return `https://${text}`;
+  return "";
 }
 
 function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecord) {

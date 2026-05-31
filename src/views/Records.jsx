@@ -1401,11 +1401,16 @@ function getReceiverEmails(config) {
     .filter((account) => account?.role === "receiver" && account.email)
     .map((account) => account.email.trim())
     .filter(Boolean);
-  if (receivers.length) return [...new Set(receivers)];
-  return String(config?.recipients || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  if (!receivers.length) {
+    String(config?.recipients || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((email) => receivers.push(email));
+  }
+  const sender = getSenderEmails(config)[0] || "";
+  if (config?.includeSenderAsReceiver && sender) receivers.push(sender);
+  return [...new Set(receivers)];
 }
 
 function recipientsToList(value) {

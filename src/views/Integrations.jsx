@@ -9,6 +9,7 @@ export function Integrations({ config, setConfig, tokenRef }) {
   const emailAccounts = normalizeEmailAccounts(config);
   const senderAccount = emailAccounts.find((account) => account.role === "sender") || null;
   const receiverAccounts = emailAccounts.filter((account) => account.role === "receiver");
+  const effectiveReceiverEmails = getEffectiveReceiverEmails(config, receiverAccounts, senderAccount);
 
   const saveEmailAccounts = (accounts) => {
     const sender = accounts.find((account) => account.role === "sender")?.email || "";
@@ -46,7 +47,7 @@ export function Integrations({ config, setConfig, tokenRef }) {
     try {
       await sendGmailMessage({
         from: config.senderEmail,
-        to: receiverAccounts.map((account) => account.email).join(", "),
+        to: effectiveReceiverEmails.join(", "),
         subject: config.subject || "Prueba de correo operacional",
         message: "Prueba de correo desde la plataforma operacional. Si recibes este mensaje, Gmail API esta funcionando.",
       }, tokenRef);
@@ -107,6 +108,19 @@ export function Integrations({ config, setConfig, tokenRef }) {
             )}
 
             <h2>Correos receptores</h2>
+            {senderAccount && (
+              <label className="item email-account-item" style={{ alignItems: "center" }}>
+                <div>
+                  <strong>Incluir emisor como receptor</strong>
+                  <small>{senderAccount.email}</small>
+                </div>
+                <input
+                  checked={Boolean(config.includeSenderAsReceiver)}
+                  type="checkbox"
+                  onChange={(event) => update("includeSenderAsReceiver", event.target.checked)}
+                />
+              </label>
+            )}
             {!receiverAccounts.length ? (
               <p className="note">No hay receptores configurados.</p>
             ) : (
@@ -132,7 +146,7 @@ export function Integrations({ config, setConfig, tokenRef }) {
               Mensaje base
               <textarea value={config.emailMessage} onChange={(event) => update("emailMessage", event.target.value)} />
             </label>
-            <button disabled={!receiverAccounts.length} type="button" onClick={testEmail}>
+            <button disabled={!effectiveReceiverEmails.length} type="button" onClick={testEmail}>
               Enviar prueba email
             </button>
           </div>
@@ -170,4 +184,10 @@ function normalizeEmailAccounts(config) {
     .filter(Boolean)
     .forEach((email) => accounts.push({ email, role: "receiver" }));
   return accounts;
+}
+
+function getEffectiveReceiverEmails(config, receiverAccounts, senderAccount) {
+  const emails = receiverAccounts.map((account) => account.email).filter(Boolean);
+  if (config?.includeSenderAsReceiver && senderAccount?.email) emails.push(senderAccount.email);
+  return [...new Set(emails.map((email) => email.trim()).filter(Boolean))];
 }

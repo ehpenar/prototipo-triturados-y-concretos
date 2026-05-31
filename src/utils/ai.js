@@ -249,7 +249,7 @@ export async function sendTelegramMessage(token, chats, message) {
 }
 
 export async function sendEmailMessage(config, message) {
-  const recipients = String(config.recipients || "").split(",").map((item) => item.trim()).filter(Boolean);
+  const recipients = getEffectiveEmailRecipients(config);
   if (!recipients.length) throw new Error("Faltan correos destinatarios");
   const response = await fetch("/.netlify/functions/send-email", {
     method: "POST",
@@ -265,6 +265,12 @@ export async function sendEmailMessage(config, message) {
     const detail = await response.text();
     throw new Error(detail.slice(0, 180));
   }
+}
+
+function getEffectiveEmailRecipients(config) {
+  const recipients = String(config.recipients || "").split(",").map((item) => item.trim()).filter(Boolean);
+  if (config?.includeSenderAsReceiver && config?.senderEmail) recipients.push(String(config.senderEmail).trim());
+  return [...new Set(recipients.filter(Boolean))];
 }
 
 export function topGroup(records, field, metric) {

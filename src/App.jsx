@@ -57,6 +57,7 @@ function App() {
       senderEmail: "",
       recipients: "",
       emailAccounts: [],
+      includeSenderAsReceiver: false,
       subject: "Recordatorio operacional",
       emailMessage: "Tienes una novedad pendiente en la plataforma operacional.",
       telegramToken: "8700426249:AAE1LIISILPiLT4JzX_hj_TFTzWMcJKdOG8",
@@ -586,8 +587,22 @@ function getConfiguredEmailRecipients(config) {
     .filter((account) => account?.role === "receiver" && account.email)
     .map((account) => account.email.trim())
     .filter(Boolean);
-  if (receiverEmails.length) return [...new Set(receiverEmails)].join(", ");
-  return String(config?.recipients || "").trim();
+  if (!receiverEmails.length) {
+    String(config?.recipients || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((email) => receiverEmails.push(email));
+  }
+  const senderEmail = getConfiguredSenderEmail(config);
+  if (config?.includeSenderAsReceiver && senderEmail) receiverEmails.push(senderEmail);
+  return [...new Set(receiverEmails)].join(", ");
+}
+
+function getConfiguredSenderEmail(config) {
+  const accounts = Array.isArray(config?.emailAccounts) ? config.emailAccounts : [];
+  const senderAccount = accounts.find((account) => account?.role === "sender" && account.email);
+  return senderAccount?.email?.trim() || String(config?.senderEmail || "").trim();
 }
 
 function buildStatusSnapshot(records) {

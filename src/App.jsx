@@ -293,6 +293,7 @@ function App() {
     try {
       const now = new Date();
       for (const note of activeEmailNotes) {
+        if (!isReminderWithinActiveWindow(note, now)) continue;
         const record = findRecordForReminder(records, note);
         const currentStatus = getRecordStatus(record);
         if (shouldTrackStatus(note)) {
@@ -353,7 +354,7 @@ function App() {
       ? `Cambio de estado ${note.associatedOt || ""}`.trim()
       : note.title || notificationConfig.subject || "Recordatorio operacional";
     await sendGmailMessage({
-      from: notificationConfig.senderEmail,
+      from: note.senderEmail || notificationConfig.senderEmail,
       to: note.recipients,
       subject,
       message: buildReminderEmailMessage(note, record, kind, statusInfo),
@@ -640,6 +641,7 @@ function App() {
           <Reminders
             documents={documents}
             notes={notes}
+            notificationConfig={notificationConfig}
             setNotes={setNotes}
             tokenRef={tokenRef}
             addLog={addLog}
@@ -864,8 +866,34 @@ function shouldSendScheduledReminder(note, now) {
   if (!isNoonWindow(now)) return false;
   if (frequency === "diario") return true;
   if (frequency === "semanal") return now.getDay() === 5;
+  if (frequency === "mensual") return now.getDate() === scheduledDayOfMonth(note, now);
   if (frequency === "fecha especifica") return isSameDate(note.date, now);
   return false;
+}
+
+function isReminderWithinActiveWindow(note, now) {
+  const start = parseDateOnly(note?.startDate);
+  if (start && start.getTime() > startOfDay(now).getTime()) return false;
+  const end = parseDateOnly(note?.endDate);
+  if (end && end.getTime() < startOfDay(now).getTime()) return false;
+  return true;
+}
+
+function parseDateOnly(value) {
+  if (!value) return null;
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function startOfDay(value) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+function scheduledDayOfMonth(note, now) {
+  const sourceDate = parseDateOnly(note?.date) || parseDateOnly(note?.startDate);
+  const requestedDay = sourceDate?.getDate() || 1;
+  return Math.min(requestedDay, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate());
 }
 
 function isNoonWindow(date) {
@@ -886,6 +914,7 @@ function buildScheduledDeliveryKey(note, date) {
   const frequency = normalizeText(note?.frequency);
   if (frequency === "diario") return `${note.id}:daily:${dateKey(date)}`;
   if (frequency === "semanal" && date.getDay() === 5) return `${note.id}:weekly:${weekKey(date)}`;
+  if (frequency === "mensual" && date.getDate() === scheduledDayOfMonth(note, date)) return `${note.id}:monthly:${date.getFullYear()}-${date.getMonth() + 1}`;
   if (frequency === "fecha especifica" && isSameDate(note.date, date)) return `${note.id}:once:${dateKey(date)}`;
   return "";
 }
@@ -972,6 +1001,8 @@ function buildReminderEmailMessage(note, record, kind, statusInfo = {}) {
     `Titulo: ${note.title || "NO ESPECIFICADO"}`,
     `Detalle: ${note.detail || "Sin detalle"}`,
     `Frecuencia: ${note.frequency || "NO ESPECIFICADO"}`,
+    note.startDate ? `Fecha inicio: ${note.startDate}` : "",
+    note.endDate ? `Fecha finalizacion: ${note.endDate}` : "",
     record ? `Estado actual: ${getRecordStatus(record) || "NO ESPECIFICADO"}` : "",
     record ? `Registro: ${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}` : "",
   ].filter(Boolean).join("\n");

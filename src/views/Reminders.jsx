@@ -1,23 +1,36 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { createId } from "../utils/helpers.js";
 import { createSheetWithHeaders, appendSheetRow } from "../utils/googleSheets.js";
 import { EmptyState } from "../components/EmptyState.jsx";
 
-export function Reminders({ documents, notes, setNotes, tokenRef, addLog, onSaved }) {
+export function Reminders({ documents, notes, notificationConfig, setNotes, tokenRef, addLog, onSaved }) {
+  const senderEmails = useMemo(() => getSenderEmails(notificationConfig), [notificationConfig]);
+  const receiverEmails = useMemo(() => getReceiverEmails(notificationConfig), [notificationConfig]);
   const [draft, setDraft] = useState({
     title: "",
     detail: "",
     frequency: "Diario",
     date: "",
+    startDate: "",
+    endDate: "",
     channel: "Plataforma",
+    senderEmail: senderEmails[0] || "",
     recipients: "",
   });
   const [sheetDraft, setSheetDraft] = useState({
     sourceId: documents[0]?.id || "",
     title: "Notas_Recordatorios",
-    columns: "Titulo,Detalle,Frecuencia,Fecha,Canal,Destinatarios,Estado",
+    columns: "DATE,TITULO,DETALLE,FRECUENCIA,FECHA INICIO,FECHA FINALIZACIÓN,CORREO EMISOR,CORREO RECEPTOR,Canal,Destinatarios,Estado",
   });
   const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    setDraft((current) => ({
+      ...current,
+      senderEmail: current.senderEmail || senderEmails[0] || "",
+      recipients: current.recipients || receiverEmails.join(", "),
+    }));
+  }, [receiverEmails, senderEmails]);
 
   useEffect(() => {
     if (!sheetDraft.sourceId && documents[0]?.id) setSheetDraft((current) => ({ ...current, sourceId: documents[0].id }));
@@ -27,7 +40,7 @@ export function Reminders({ documents, notes, setNotes, tokenRef, addLog, onSave
     event.preventDefault();
     if (!draft.title.trim()) return;
     setNotes((current) => [...current, { ...draft, id: createId(), createdAt: new Date().toISOString(), status: "Pendiente" }]);
-    setDraft({ title: "", detail: "", frequency: "Diario", date: "", channel: "Plataforma", recipients: "" });
+    setDraft({ title: "", detail: "", frequency: "Diario", date: "", startDate: "", endDate: "", channel: "Plataforma", senderEmail: senderEmails[0] || "", recipients: receiverEmails.join(", ") });
   };
 
   const createSheet = async (event) => {
@@ -54,9 +67,18 @@ export function Reminders({ documents, notes, setNotes, tokenRef, addLog, onSave
         columns,
         {
           Titulo: note.title,
+          TITULO: note.title,
           Detalle: note.detail,
+          DETALLE: note.detail,
           Frecuencia: note.frequency,
+          FRECUENCIA: note.frequency,
           Fecha: note.date,
+          DATE: note.date,
+          "FECHA INICIO": note.startDate,
+          "FECHA FINALIZACION": note.endDate,
+          "FECHA FINALIZACIÓN": note.endDate,
+          "CORREO EMISOR": note.senderEmail,
+          "CORREO RECEPTOR": note.recipients,
           Canal: note.channel,
           Destinatarios: note.recipients,
           Estado: note.status,
@@ -90,12 +112,20 @@ export function Reminders({ documents, notes, setNotes, tokenRef, addLog, onSave
                 <option>Diario</option>
                 <option>Semanal</option>
                 <option>Mensual</option>
-                <option>Fecha especifica</option>
+                <option>Fecha específica</option>
               </select>
             </label>
             <label>
               Fecha
               <input type="datetime-local" value={draft.date} onChange={(event) => setDraft((current) => ({ ...current, date: event.target.value }))} />
+            </label>
+            <label>
+              FECHA INICIO
+              <input type="date" value={draft.startDate} onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))} />
+            </label>
+            <label>
+              FECHA FINALIZACIÓN
+              <input type="date" value={draft.endDate} onChange={(event) => setDraft((current) => ({ ...current, endDate: event.target.value }))} />
             </label>
             <label>
               Canal
@@ -107,9 +137,36 @@ export function Reminders({ documents, notes, setNotes, tokenRef, addLog, onSave
               </select>
             </label>
             <label>
-              Destinatarios
-              <input value={draft.recipients} onChange={(event) => setDraft((current) => ({ ...current, recipients: event.target.value }))} />
+              CORREO EMISOR
+              <select value={draft.senderEmail} onChange={(event) => setDraft((current) => ({ ...current, senderEmail: event.target.value }))}>
+                {!senderEmails.length && <option value="">No hay emisores configurados</option>}
+                {senderEmails.map((email) => (
+                  <option key={`reminder-sender-${email}`} value={email}>{email}</option>
+                ))}
+              </select>
             </label>
+            <div>
+              <span style={{ display: "block", marginBottom: "8px", fontSize: "12px", fontWeight: "700", color: "var(--muted)", textTransform: "uppercase" }}>
+                CORREO RECEPTOR
+              </span>
+              {!receiverEmails.length ? (
+                <p className="note" style={{ margin: 0 }}>No hay receptores configurados en Correos vinculados.</p>
+              ) : (
+                <div style={{ display: "grid", gap: "8px" }}>
+                  {receiverEmails.map((email) => (
+                    <label key={`reminder-receiver-${email}`} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+                      <input
+                        checked={recipientsToList(draft.recipients).some((item) => item.toLowerCase() === email.toLowerCase())}
+                        type="checkbox"
+                        onChange={() => setDraft((current) => ({ ...current, recipients: toggleRecipient(current.recipients, email) }))}
+                      />
+                      {email}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <p className="note" style={{ margin: "8px 0 0" }}>Seleccionados: {draft.recipients || "ninguno"}</p>
+            </div>
             <button type="submit">Crear recordatorio</button>
           </form>
         </section>
@@ -150,6 +207,8 @@ export function Reminders({ documents, notes, setNotes, tokenRef, addLog, onSave
                 <strong>{note.title}</strong>
                 <small>
                   {note.frequency} · {note.date || "Sin fecha"} · {note.channel} · {note.recipients || "Sin destinatarios"}
+                  {note.startDate || note.endDate ? ` · ${note.startDate || "sin inicio"} - ${note.endDate || "sin fin"}` : ""}
+                  {note.senderEmail ? ` · emisor ${note.senderEmail}` : ""}
                 </small>
                 <p className="muted">{note.detail}</p>
                 <div className="inline-actions">
@@ -162,5 +221,54 @@ export function Reminders({ documents, notes, setNotes, tokenRef, addLog, onSave
         )}
       </section>
     </section>
+  );
+}
+
+function getSenderEmails(config) {
+  const accounts = Array.isArray(config?.emailAccounts) ? config.emailAccounts : [];
+  const senders = accounts
+    .filter((account) => account?.role === "sender" && account.email)
+    .map((account) => account.email.trim())
+    .filter(Boolean);
+  if (senders.length) return [...new Set(senders)];
+  return config?.senderEmail ? [String(config.senderEmail).trim()].filter(Boolean) : [];
+}
+
+function getReceiverEmails(config) {
+  const accounts = Array.isArray(config?.emailAccounts) ? config.emailAccounts : [];
+  const receivers = accounts
+    .filter((account) => account?.role === "receiver" && account.email)
+    .map((account) => account.email.trim())
+    .filter(Boolean);
+  if (!receivers.length) {
+    String(config?.recipients || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((email) => receivers.push(email));
+  }
+  const sender = getSenderEmails(config)[0] || "";
+  if (config?.includeSenderAsReceiver && sender) receivers.push(sender);
+  return [...new Set(receivers)];
+}
+
+function recipientsToList(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function listToRecipients(values) {
+  return [...new Set(values.map((item) => item.trim()).filter(Boolean))].join(", ");
+}
+
+function toggleRecipient(currentValue, email) {
+  const currentRecipients = recipientsToList(currentValue);
+  const exists = currentRecipients.some((item) => item.toLowerCase() === email.toLowerCase());
+  return listToRecipients(
+    exists
+      ? currentRecipients.filter((item) => item.toLowerCase() !== email.toLowerCase())
+      : [...currentRecipients, email],
   );
 }

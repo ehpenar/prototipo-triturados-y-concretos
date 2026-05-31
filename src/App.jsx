@@ -8,7 +8,13 @@ import {
   normalizeText,
   extractSpreadsheetId,
 } from "./utils/helpers.js";
-import { loadSpreadsheet, sendGmailMessage, upsertSheetRows } from "./utils/googleSheets.js";
+import {
+  createSheetWithHeaders,
+  loadSpreadsheet,
+  sendGmailMessage,
+  updateSheetCell,
+  upsertSheetRows,
+} from "./utils/googleSheets.js";
 import { detectRelations, detectAnomalies } from "./utils/analysis.js";
 import {
   FINANCIAL_SUMMARY_HEADERS,
@@ -30,6 +36,9 @@ import { Reports } from "./views/Reports.jsx";
 import { Integrations } from "./views/Integrations.jsx";
 import { Assistant } from "./views/Assistant.jsx";
 import { Settings } from "./views/Settings.jsx";
+
+const LINKED_EMAILS_SHEET = "Correos vinculados";
+const LINKED_EMAILS_HEADERS = ["CORREOS EMISOR", "CORREOS RECEPTORES"];
 
 function App() {
   const [sources, setSources] = useState(loadSources);
@@ -157,6 +166,14 @@ function App() {
 
   const saveGlobalOtChangeState = () => {
     saveStored("operation_ai_global_ot_change_state", globalOtChangeStateRef.current);
+  };
+
+  const updateNotificationConfig = (updater) => {
+    setNotificationConfig((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      if (shouldPersistLinkedEmailConfig(current, next)) persistLinkedEmailConfig(next, true);
+      return next;
+    });
   };
 
   async function processGlobalStatusChanges() {
@@ -376,6 +393,7 @@ function App() {
     }
     const nextRecords = loadedDocuments.flatMap((document) => document.records);
     const nextRelations = detectRelations(nextRecords);
+    await syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt);
     await syncFinancialSummary(loadedDocuments, allowAuthPrompt);
     setDocuments(loadedDocuments);
     setRecords(nextRecords);
@@ -410,6 +428,42 @@ function App() {
       addLog(`Resumen financiero: ${result.added} creadas, ${result.changed} actualizadas, ${result.unchanged} sin cambios.`);
     } catch (error) {
       addLog(`Error resumen financiero: ${error.message}`);
+    }
+  }
+
+  async function syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt = false) {
+    const summaryDocument = findFinancialSummaryDocument(loadedDocuments);
+    if (!summaryDocument) {
+      addLog("Correos vinculados omitidos: no se encontro HOJA RESUMEN FINANCIERO OTS.");
+      return;
+    }
+    const linkedSheet = summaryDocument.sheets.find((sheet) => normalizeText(sheet.title) === normalizeText(LINKED_EMAILS_SHEET));
+    if (!linkedSheet) {
+      await persistLinkedEmailConfig(notificationConfig, allowAuthPrompt);
+      return;
+    }
+    const linkedRecord = summaryDocument.records.find((record) => normalizeText(record.sheetName) === normalizeText(LINKED_EMAILS_SHEET));
+    if (!linkedRecord) {
+      await persistLinkedEmailConfig(notificationConfig, allowAuthPrompt);
+      return;
+    }
+    const nextConfig = buildNotificationConfigFromLinkedEmails(notificationConfig, linkedRecord);
+    setNotificationConfig(nextConfig);
+    addLog("Correos vinculados cargados desde HOJA RESUMEN FINANCIERO OTS / Correos vinculados.");
+  }
+
+  async function persistLinkedEmailConfig(config, allowAuthPrompt = false) {
+    const summarySource = sources.find((source) => normalizeText(source.name).includes(normalizeText("Resumen Financiero OTS")));
+    const spreadsheetId = extractSpreadsheetId(summarySource?.url);
+    if (!spreadsheetId) return;
+    try {
+      await createSheetWithHeaders(spreadsheetId, LINKED_EMAILS_SHEET, LINKED_EMAILS_HEADERS, tokenRef);
+      const { senders, receivers } = buildLinkedEmailColumns(config);
+      await updateSheetCell(spreadsheetId, LINKED_EMAILS_SHEET, "A", 2, senders, tokenRef);
+      await updateSheetCell(spreadsheetId, LINKED_EMAILS_SHEET, "B", 2, receivers, tokenRef);
+      addLog("Correos vinculados actualizados en HOJA RESUMEN FINANCIERO OTS.");
+    } catch (error) {
+      if (allowAuthPrompt) addLog(`Error guardando Correos vinculados: ${error.message}`);
     }
   }
 
@@ -606,7 +660,7 @@ function App() {
         )}
 
         {activeView === "integrations" && (
-          <Integrations config={notificationConfig} setConfig={setNotificationConfig} tokenRef={tokenRef} />
+          <Integrations config={notificationConfig} setConfig={updateNotificationConfig} tokenRef={tokenRef} />
         )}
 
         {activeView === "assistant" && (
@@ -659,6 +713,75 @@ function getConfiguredSenderEmail(config) {
   const accounts = Array.isArray(config?.emailAccounts) ? config.emailAccounts : [];
   const senderAccount = accounts.find((account) => account?.role === "sender" && account.email);
   return senderAccount?.email?.trim() || String(config?.senderEmail || "").trim();
+}
+
+function buildNotificationConfigFromLinkedEmails(currentConfig, record) {
+  const senders = parseEmailList(getLinkedEmailCell(record, "CORREOS EMISOR"));
+  const receivers = parseEmailList(getLinkedEmailCell(record, "CORREOS RECEPTORES"));
+  if (!senders.length && !receivers.length) return currentConfig;
+  const senderSet = new Set(senders.map((email) => email.toLowerCase()));
+  const includeSenderAsReceiver = receivers.some((email) => senderSet.has(email.toLowerCase()));
+  return {
+    ...currentConfig,
+    senderEmail: senders[0] || currentConfig.senderEmail || "",
+    recipients: receivers.join(", "),
+    includeSenderAsReceiver,
+    emailAccounts: [
+      ...senders.map((email) => ({ email, role: "sender" })),
+      ...receivers
+        .filter((email) => !senderSet.has(email.toLowerCase()))
+        .map((email) => ({ email, role: "receiver" })),
+    ],
+  };
+}
+
+function buildLinkedEmailColumns(config) {
+  const accounts = Array.isArray(config?.emailAccounts) ? config.emailAccounts : [];
+  const senders = accounts
+    .filter((account) => account?.role === "sender" && account.email)
+    .map((account) => account.email.trim())
+    .filter(Boolean);
+  if (!senders.length && config?.senderEmail) senders.push(String(config.senderEmail).trim());
+
+  const receivers = accounts
+    .filter((account) => account?.role === "receiver" && account.email)
+    .map((account) => account.email.trim())
+    .filter(Boolean);
+  if (!receivers.length) receivers.push(...parseEmailList(config?.recipients));
+  if (config?.includeSenderAsReceiver) receivers.push(...senders);
+
+  return {
+    senders: uniqueEmails(senders).join(", "),
+    receivers: uniqueEmails(receivers).join(", "),
+  };
+}
+
+function shouldPersistLinkedEmailConfig(previousConfig, nextConfig) {
+  const previousColumns = buildLinkedEmailColumns(previousConfig);
+  const nextColumns = buildLinkedEmailColumns(nextConfig);
+  return previousColumns.senders !== nextColumns.senders || previousColumns.receivers !== nextColumns.receivers;
+}
+
+function getLinkedEmailCell(record, header) {
+  const currentHeader = record?.headers?.find((item) => normalizeText(item) === normalizeText(header));
+  return currentHeader ? record.cells?.[currentHeader] : "";
+}
+
+function parseEmailList(value) {
+  return String(value || "")
+    .split(/[,;\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueEmails(emails) {
+  const seen = new Set();
+  return emails.filter((email) => {
+    const key = email.toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function buildStatusSnapshot(records) {

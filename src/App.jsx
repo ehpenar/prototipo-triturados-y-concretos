@@ -10,6 +10,7 @@ import {
 } from "./utils/helpers.js";
 import {
   createSheetWithHeaders,
+  getStoredGoogleToken,
   loadSpreadsheet,
   sendGmailMessage,
   updateSheetCell,
@@ -73,7 +74,7 @@ function App() {
       telegramChats: "",
     }),
   );
-  const tokenRef = useRef(localStorage.getItem("google_access_token") || "");
+  const tokenRef = useRef(getStoredGoogleToken());
   const syncInProgressRef = useRef(false);
   const reminderSendInProgressRef = useRef(false);
   const globalStatusSendInProgressRef = useRef(false);

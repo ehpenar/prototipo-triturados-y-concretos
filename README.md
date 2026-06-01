@@ -92,6 +92,7 @@ VITE_GOOGLE_CLIENT_ID=...
 - El `client_secret` queda guardado solo como dato de configuracion para migrarlo luego a backend; el login OAuth del navegador usa `client_id`.
 - La lectura de Sheets usa `values:batchGet` para traer todas las pestanas detectadas del documento.
 - La edicion usa Google Sheets API: `values.update`, `values.append` y `batchUpdate` para crear hojas.
+- La conexion OAuth con Google conserva el token en `localStorage` junto con su expiracion y fecha de vinculacion. La app reutiliza el token mientras siga vigente e intenta renovarlo silenciosamente antes de volver a solicitar autorizacion, sin cambiar los flujos de sincronizacion ni automatizaciones.
 - Telegram puede enviarse directo en prueba o mediante `netlify/functions/send-telegram.js`.
 - Email automatico y pruebas de correo usan Gmail API directamente desde el navegador con OAuth. El scope requerido es `https://www.googleapis.com/auth/gmail.send`.
 

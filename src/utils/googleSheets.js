@@ -8,6 +8,11 @@ import {
 } from "./helpers.js";
 import { parseValues, classifyDocument } from "./analysis.js";
 
+const GOOGLE_ACCESS_TOKEN_KEY = "google_access_token";
+const GOOGLE_TOKEN_EXPIRES_AT_KEY = "google_access_token_expires_at";
+const GOOGLE_TOKEN_LINKED_AT_KEY = "google_access_token_linked_at";
+const TOKEN_REFRESH_MARGIN_MS = 60 * 1000;
+
 export async function loadSpreadsheet(source, tokenRef, allowAuthPrompt = true) {
   const spreadsheetId = extractSpreadsheetId(source.url);
   if (!spreadsheetId) throw new Error("URL de Google Sheets invalida");
@@ -251,15 +256,26 @@ function rowsEqual(left, right, length) {
 export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt = true) {
   const headers = { ...(options.headers || {}) };
   if (options.body) headers["Content-Type"] = "application/json";
+  if (tokenRef.current && isStoredGoogleTokenExpired()) {
+    clearStoredGoogleToken();
+    tokenRef.current = "";
+  }
   if (tokenRef.current) headers.Authorization = `Bearer ${tokenRef.current}`;
   const response = await fetch(url, { ...options, headers });
   if (response.status === 401 || response.status === 403) {
+    clearStoredGoogleToken();
+    tokenRef.current = "";
     if (!allowAuthPrompt) {
-      throw new Error("Autorizacion requerida. Pulsa Sincronizar para iniciar sesion con Google.");
+      try {
+        const token = await requestGoogleToken("");
+        tokenRef.current = token;
+        return googleFetch(url, tokenRef, options, allowAuthPrompt);
+      } catch {
+        throw new Error("Autorizacion requerida. Pulsa Sincronizar para iniciar sesion con Google.");
+      }
     }
-    const token = await requestGoogleToken();
+    const token = await requestGoogleTokenWithFallback();
     tokenRef.current = token;
-    localStorage.setItem("google_access_token", token);
     return googleFetch(url, tokenRef, options, allowAuthPrompt);
   }
   if (!response.ok) {
@@ -270,11 +286,25 @@ export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt =
   return response.json();
 }
 
-export function requestGoogleToken() {
+export function getStoredGoogleToken() {
+  try {
+    const token = localStorage.getItem(GOOGLE_ACCESS_TOKEN_KEY) || "";
+    if (!token) return "";
+    if (isStoredGoogleTokenExpired()) {
+      clearStoredGoogleToken();
+      return "";
+    }
+    return token;
+  } catch {
+    return "";
+  }
+}
+
+export function requestGoogleToken(prompt = "") {
   return new Promise((resolve, reject) => {
     if (!window.google?.accounts?.oauth2) {
       loadGoogleIdentity()
-        .then(() => requestGoogleToken().then(resolve).catch(reject))
+        .then(() => requestGoogleToken(prompt).then(resolve).catch(reject))
         .catch(reject);
       return;
     }
@@ -283,11 +313,51 @@ export function requestGoogleToken() {
       scope: CONFIG.google.scopes,
       callback: (tokenResponse) => {
         if (tokenResponse.error) reject(new Error(tokenResponse.error));
-        else resolve(tokenResponse.access_token);
+        else {
+          persistGoogleToken(tokenResponse);
+          resolve(tokenResponse.access_token);
+        }
       },
     });
-    client.requestAccessToken({ prompt: "consent" });
+    client.requestAccessToken({ prompt });
   });
+}
+
+async function requestGoogleTokenWithFallback() {
+  try {
+    return await requestGoogleToken("");
+  } catch {
+    return requestGoogleToken("consent");
+  }
+}
+
+function persistGoogleToken(tokenResponse) {
+  const token = tokenResponse.access_token || "";
+  if (!token) return;
+  const now = Date.now();
+  const expiresInMs = Math.max(0, Number(tokenResponse.expires_in || 0) * 1000);
+  localStorage.setItem(GOOGLE_ACCESS_TOKEN_KEY, token);
+  localStorage.setItem(GOOGLE_TOKEN_LINKED_AT_KEY, new Date(now).toISOString());
+  if (expiresInMs) localStorage.setItem(GOOGLE_TOKEN_EXPIRES_AT_KEY, String(now + expiresInMs));
+}
+
+function isStoredGoogleTokenExpired() {
+  try {
+    const expiresAt = Number(localStorage.getItem(GOOGLE_TOKEN_EXPIRES_AT_KEY) || 0);
+    return Boolean(expiresAt && Date.now() >= expiresAt - TOKEN_REFRESH_MARGIN_MS);
+  } catch {
+    return false;
+  }
+}
+
+function clearStoredGoogleToken() {
+  try {
+    localStorage.removeItem(GOOGLE_ACCESS_TOKEN_KEY);
+    localStorage.removeItem(GOOGLE_TOKEN_EXPIRES_AT_KEY);
+    localStorage.removeItem(GOOGLE_TOKEN_LINKED_AT_KEY);
+  } catch {
+    // Ignore storage cleanup errors; the next request will ask Google again.
+  }
 }
 
 export function loadGoogleIdentity() {

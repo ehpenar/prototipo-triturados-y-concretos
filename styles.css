@@ -308,6 +308,12 @@ textarea {
   gap: 10px;
 }
 
+.dashboard-scroll-list {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .item {
   border: 1px solid var(--line);
   border-radius: 7px;

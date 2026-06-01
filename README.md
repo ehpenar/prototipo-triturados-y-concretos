@@ -62,6 +62,8 @@ VITE_GOOGLE_CLIENT_ID=...
 ## Cambios operativos recientes
 
 - La vista `Dashboard` calcula `Filas OT` usando solo la columna `OT` de `Copia de ORDENES DE TRABAJO TYC`, en la pestana `gid=1862269386`.
+- La seccion `Rankings dinamicos` del `Dashboard` prioriza datos operativos reales cuando estan disponibles: costos por OT combinando compras y mano de obra, equipos por costo acumulado, tecnicos por actividades/horas y proveedores por compras desde `Copia de Matriz de Seguimiento (respuestas)`. Si no hay datos suficientes, conserva el ranking generico anterior como respaldo.
+- Las listas de `Alertas inteligentes` y `Rankings dinamicos` en el `Dashboard` tienen scroll interno para mantener la vista compacta sin cambiar los calculos ni la informacion mostrada.
 - La vista `Registros` permite filtrar por `OT` y tambien por `ESTADO` con las opciones `TERMINADO`, `REVISION`, `SIN REVISAR` y `SIN INICIAR`.
 - La vista `Ver detalle` incluye generacion de informes por OT con IA. El informe toma la fila financiera correspondiente en `HOJA RESUMEN FINANCIERO OTS / Hoja 2`, usa `MANO OBRA`, `DETALLE_MANO_OBRA`, tiempos, ordenes de compra y SP relacionadas, y guarda el resultado buscando dinamicamente la columna con encabezado `INFORME`.
 - La sincronizacion del resumen financiero agrega `QUIEN SOLICITA` desde `Copia de ORDENES DE TRABAJO TYC` hacia `HOJA RESUMEN FINANCIERO OTS / Hoja 2`, conservando la asociacion por `OT`. El modal `Ver detalle` tambien muestra este dato en una tarjeta propia y usa como respaldo el valor de la OT cuando todavia no se ha sincronizado el resumen.

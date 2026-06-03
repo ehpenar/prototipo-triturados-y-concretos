@@ -3,13 +3,13 @@ import { sum, cleanKey, formatMoney, normalizeText, parseMoney } from "../utils/
 import { trendPoints } from "../utils/analysis.js";
 import { EmptyState } from "../components/EmptyState.jsx";
 
-const WORK_ORDERS_SPREADSHEET_ID = "1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME";
+const WORK_ORDERS_SPREADSHEET_ID = "1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns";
 const WORK_ORDERS_SHEET_ID = "1862269386";
 const WORK_ORDERS_SOURCE_NAME = "Copia de ORDENES DE TRABAJO TYC";
 const WORK_ORDERS_SHEET_NAME = "copia de prueba respuestas de formulario 1";
 
 export function Dashboard({ documents, records, alerts, rankingMode, setRankingMode, runAnalysis }) {
-  const totalCost = sum(records.map((record) => record.normalized.costNumber));
+  const totalCost = calculateDashboardDetectedCost(records);
   const totalHours = sum(records.map((record) => record.normalized.hoursNumber));
   const equipments = new Set(records.map((record) => cleanKey(record.normalized.equipment)).filter(Boolean));
   const workOrderRows = countWorkOrderRows(records);
@@ -19,7 +19,7 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
       <div className="kpi-grid">
         <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} />
         <Kpi label="Filas OT" value={workOrderRows} hint="Columna OT en Copia de ORDENES DE TRABAJO TYC" />
-        <Kpi label="Costo detectado" value={formatMoney(totalCost)} hint="Suma de columnas reconocidas como costo" />
+        <Kpi label="Costo detectado" value={formatMoney(totalCost)} hint="FACTURACION + Matriz de Seguimiento" />
         <Kpi label="Horas" value={totalHours.toFixed(1)} hint="Horas reconocidas en reportes" />
         <Kpi label="Equipos" value={equipments.size} hint="Activos detectados dinamicamente" />
       </div>
@@ -75,6 +75,14 @@ function isWorkOrdersRecord(record) {
     normalizeText(record.sheetName) === normalizeText(WORK_ORDERS_SHEET_NAME);
 
   return isTargetDocument && isTargetSheet;
+}
+
+function calculateDashboardDetectedCost(records) {
+  return sum(records.map((record) => {
+    if (isDashboardMatrixCostRecord(record)) return getMatrixPurchaseValue(record);
+    if (isDashboardBillingCostRecord(record)) return getBillingCostValue(record);
+    return 0;
+  }));
 }
 
 function Kpi({ label, value, hint }) {
@@ -308,6 +316,15 @@ function getMatrixPurchaseValue(record) {
   ]));
 }
 
+function getBillingCostValue(record) {
+  return parseMoney(getCell(record, [
+    "Costo Total",
+    "COSTO TOTAL",
+    "VALOR TOTAL",
+    "TOTAL",
+  ]) || record.normalized.costNumber);
+}
+
 function getCell(record, names) {
   if (!record) return "";
   for (const name of names) {
@@ -345,6 +362,14 @@ function sheetIncludes(record, sheetName) {
 
 function isMatrixRecord(record) {
   return sourceIncludes(record, "Matriz de Seguimiento");
+}
+
+function isDashboardMatrixCostRecord(record) {
+  return sourceIncludes(record, "Matriz de Seguimiento") && sheetIncludes(record, "Respuestas de formulario 1");
+}
+
+function isDashboardBillingCostRecord(record) {
+  return sourceIncludes(record, "Reporte de Actividades Mantenimiento") && normalizeText(record.sheetName) === normalizeText("FACTURACION");
 }
 
 function isFinancialSummaryRecord(record) {

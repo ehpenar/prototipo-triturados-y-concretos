@@ -54,9 +54,9 @@ VITE_GOOGLE_CLIENT_ID=...
 
 ## Google Sheets configurados
 
-- Copia de Matriz de Seguimiento (respuestas): https://docs.google.com/spreadsheets/d/1Hh4p4ydxmfT1BHC3E8YLoluXVUOBZvOfUKT-yR3tjrI/edit?gid=1301505875#gid=1301505875
-- Copia de ORDENES DE TRABAJO TYC: https://docs.google.com/spreadsheets/d/1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME/edit?gid=1862269386#gid=1862269386
-- Copia de REPORTE DE ACTIVIDADES MANTENIMIENTO (respuestas): https://docs.google.com/spreadsheets/d/1PZCi-L47ltwrJXGdwF1gjWj7fZHdeFeS_MDwS8cpS3A/edit?gid=1575504867#gid=1575504867
+- Copia de Matriz de Seguimiento (respuestas): https://docs.google.com/spreadsheets/d/1unDKs0l1TNC_3IuV_zYE1ChslZMKaK9TlMlFwbpvK6Q/edit?usp=sharing
+- Copia de ORDENES DE TRABAJO TYC: https://docs.google.com/spreadsheets/d/1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns/edit?usp=sharing
+- Copia de REPORTE DE ACTIVIDADES MANTENIMIENTO (respuestas): https://docs.google.com/spreadsheets/d/1uAqIY0SpBLDeHEMrUK709rlvkpw4EJIhuVl7eR8tbVo/edit?usp=sharing
 - HOJA RESUMEN FINANCIERO OTS: https://docs.google.com/spreadsheets/d/1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ/edit?usp=sharing&utm_source=chatgpt.com&urp=gmail_link
 
 ## Cambios operativos recientes
@@ -64,6 +64,7 @@ VITE_GOOGLE_CLIENT_ID=...
 - La vista `Dashboard` calcula `Filas OT` usando solo la columna `OT` de `Copia de ORDENES DE TRABAJO TYC`, en la pestana `gid=1862269386`.
 - La seccion `Rankings dinamicos` del `Dashboard` prioriza datos operativos reales cuando estan disponibles: costos por OT combinando compras y mano de obra, equipos por costo acumulado, tecnicos por actividades/horas y proveedores por compras desde `Copia de Matriz de Seguimiento (respuestas)`. Si no hay datos suficientes, conserva el ranking generico anterior como respaldo.
 - Las listas de `Alertas inteligentes` y `Rankings dinamicos` en el `Dashboard` tienen scroll interno para mantener la vista compacta sin cambiar los calculos ni la informacion mostrada.
+- El KPI `Costo detectado` del `Dashboard` suma exclusivamente costos desde `REPORTE DE ACTIVIDADES MANTENIMIENTO / FACTURACION` y `Copia de Matriz de Seguimiento (respuestas) / Respuestas de formulario 1`, usando las columnas de costo disponibles en esas hojas.
 - La vista `Registros` permite filtrar por `OT` y tambien por `ESTADO` con las opciones `TERMINADO`, `REVISION`, `SIN REVISAR` y `SIN INICIAR`.
 - La vista `Ver detalle` incluye generacion de informes por OT con IA. El informe toma la fila financiera correspondiente en `HOJA RESUMEN FINANCIERO OTS / Hoja 2`, usa `MANO OBRA`, `DETALLE_MANO_OBRA`, tiempos, ordenes de compra y SP relacionadas, y guarda el resultado buscando dinamicamente la columna con encabezado `INFORME`.
 - La sincronizacion del resumen financiero agrega `QUIEN SOLICITA` desde `Copia de ORDENES DE TRABAJO TYC` hacia `HOJA RESUMEN FINANCIERO OTS / Hoja 2`, conservando la asociacion por `OT`. El modal `Ver detalle` tambien muestra este dato en una tarjeta propia y usa como respaldo el valor de la OT cuando todavia no se ha sincronizado el resumen.

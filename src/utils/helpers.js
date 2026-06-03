@@ -135,7 +135,7 @@ export function loadSources() {
         migrated = true;
         return {
           ...source,
-          url: "https://docs.google.com/spreadsheets/d/1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME/edit?gid=1862269386#gid=1862269386",
+          url: "https://docs.google.com/spreadsheets/d/1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns/edit?usp=sharing",
         };
       }
       return source;

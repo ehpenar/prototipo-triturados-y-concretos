@@ -29,17 +29,17 @@ export const CONFIG = {
   initialSources: [
     {
       name: "Copia de Matriz de Seguimiento (respuestas)",
-      url: "https://docs.google.com/spreadsheets/d/1Hh4p4ydxmfT1BHC3E8YLoluXVUOBZvOfUKT-yR3tjrI/edit?gid=1301505875#gid=1301505875",
+      url: "https://docs.google.com/spreadsheets/d/1unDKs0l1TNC_3IuV_zYE1ChslZMKaK9TlMlFwbpvK6Q/edit?usp=sharing",
       roleHint: "compras solicitudes repuestos proveedores costos estados fechas",
     },
     {
       name: "Copia de ORDENES DE TRABAJO TYC",
-      url: "https://docs.google.com/spreadsheets/d/1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME/edit?gid=1862269386#gid=1862269386",
+      url: "https://docs.google.com/spreadsheets/d/1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns/edit?usp=sharing",
       roleHint: "ordenes trabajo equipos areas fallas prioridades responsables estados",
     },
     {
       name: "Copia de REPORTE DE ACTIVIDADES MANTENIMIENTO (respuestas)",
-      url: "https://docs.google.com/spreadsheets/d/1PZCi-L47ltwrJXGdwF1gjWj7fZHdeFeS_MDwS8cpS3A/edit?gid=1575504867#gid=1575504867",
+      url: "https://docs.google.com/spreadsheets/d/1uAqIY0SpBLDeHEMrUK709rlvkpw4EJIhuVl7eR8tbVo/edit?usp=sharing",
       roleHint: "actividades tecnicos horas equipos observaciones ot",
     },
     {

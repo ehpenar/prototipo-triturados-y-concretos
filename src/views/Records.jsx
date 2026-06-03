@@ -14,7 +14,7 @@ import { FilterSelect } from "../components/FilterSelect.jsx";
 import { EmptyState } from "../components/EmptyState.jsx";
 
 const TARGET_RECORDS_SHEET = "copia de prueba respuestas de formulario 1";
-const TARGET_SPREADSHEET_ID = "1wWFSW2M3CdxHlr3q-L4eeMhmGMvmCaeUA0tGptWOqME";
+const TARGET_SPREADSHEET_ID = "1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns";
 const TARGET_SHEET_ID = "1862269386";
 const FINANCIAL_SUMMARY_SPREADSHEET_ID = "1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ";
 const RECORD_STATUS_OPTIONS = ["TERMINADO", "REVISION", "SIN REVISAR", "SIN INICIAR"];

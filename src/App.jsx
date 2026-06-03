@@ -10,6 +10,7 @@ import {
 } from "./utils/helpers.js";
 import {
   appendSheetRow,
+  clearGoogleSession,
   createSheetWithHeaders,
   getStoredGoogleToken,
   loadSpreadsheet,
@@ -44,8 +45,9 @@ const LINKED_EMAILS_HEADERS = ["CORREOS EMISOR", "CORREOS RECEPTORES"];
 const CHANGES_SHEET = "Cambios";
 const CHANGES_HEADERS = ["documento", "Hoja", "donde se hizo el cambio", "cambio anterio", "cambio actual"];
 const CHANGE_DIGEST_THRESHOLD = 5;
-const MAX_TRACKED_CHANGE_VALUE_LENGTH = 180;
-const MAX_TRACKED_FIELDS_PER_RECORD = 24;
+const MAX_TRACKED_CHANGE_VALUE_LENGTH = 80;
+const MAX_TRACKED_FIELDS_PER_RECORD = 12;
+const MAX_PERSISTED_OT_CHANGE_STATE_CHARS = 600000;
 const GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state_v2";
 const LEGACY_GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state";
 const TRACKED_CHANGE_FIELD_KEYWORDS = [
@@ -202,6 +204,12 @@ function App() {
   };
 
   const saveGlobalOtChangeState = () => {
+    const serialized = JSON.stringify(globalOtChangeStateRef.current || {});
+    if (serialized.length > MAX_PERSISTED_OT_CHANGE_STATE_CHARS) {
+      clearStoredValue(GLOBAL_OT_CHANGE_STATE_KEY);
+      addLog("Monitoreo OT activo solo en memoria: el estado supera el limite seguro del navegador.");
+      return;
+    }
     saveStored(GLOBAL_OT_CHANGE_STATE_KEY, globalOtChangeStateRef.current);
   };
 
@@ -547,6 +555,12 @@ function App() {
     addLog("Analisis local completado.");
   };
 
+  const logoutGoogleAccount = () => {
+    clearGoogleSession(tokenRef);
+    setSyncStatus("Sesion Google cerrada");
+    addLog("Sesion Google cerrada. Pulsa Sincronizar para elegir otra cuenta.");
+  };
+
   const addSource = (event) => {
     event.preventDefault();
     if (!newSource.name.trim() || !newSource.url.trim()) return;
@@ -630,6 +644,9 @@ function App() {
           <span>{syncStatus}</span>
           <button onClick={() => syncAll(sources, true)} type="button">
             Sincronizar
+          </button>
+          <button className="secondary-button" onClick={logoutGoogleAccount} type="button">
+            Cerrar sesion Google
           </button>
         </div>
       </aside>
@@ -865,6 +882,14 @@ function cleanupLegacyOtChangeState() {
     localStorage.removeItem(LEGACY_GLOBAL_OT_CHANGE_STATE_KEY);
   } catch {
     // Ignore cleanup errors; the compact v2 key is used from now on.
+  }
+}
+
+function clearStoredValue(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Ignore cleanup errors; the in-memory state remains available for this session.
   }
 }
 

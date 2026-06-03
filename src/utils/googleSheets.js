@@ -304,6 +304,19 @@ export function getStoredGoogleToken() {
   }
 }
 
+export function clearGoogleSession(tokenRef) {
+  const token = tokenRef?.current || "";
+  if (token && window.google?.accounts?.oauth2?.revoke) {
+    try {
+      window.google.accounts.oauth2.revoke(token, () => {});
+    } catch {
+      // Clearing local credentials is enough to force a new authorization flow.
+    }
+  }
+  clearStoredGoogleToken();
+  if (tokenRef) tokenRef.current = "";
+}
+
 export function requestGoogleToken(prompt = "") {
   return new Promise((resolve, reject) => {
     if (!window.google?.accounts?.oauth2) {
@@ -329,7 +342,7 @@ export function requestGoogleToken(prompt = "") {
 
 async function requestGoogleTokenWithFallback() {
   try {
-    return await requestGoogleToken("");
+    return await requestGoogleToken("select_account");
   } catch {
     return requestGoogleToken("select_account consent");
   }

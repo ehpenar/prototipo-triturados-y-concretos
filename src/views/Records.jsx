@@ -66,6 +66,10 @@ export function Records({
   const totalPages = Math.max(1, Math.ceil(tableRecords.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const pageRecords = useMemo(() => tableRecords.slice((safePage - 1) * pageSize, safePage * pageSize), [tableRecords, safePage, pageSize]);
+  const headerTooltips = useMemo(
+    () => buildHeaderTooltips(headers, pageRecords, sourceRecords),
+    [headers, pageRecords, sourceRecords],
+  );
   const selectedRecord = tableRecords.find((record) => record.uid === selectedRecordId) || null;
   const detailedRecord = tableRecords.find((record) => record.uid === detailedRecordId) || null;
   const detailedFinancialRecord = detailedRecord ? findFinancialReportTarget(detailedRecord, sourceRecords)?.record || detailedRecord : null;
@@ -395,7 +399,7 @@ export function Records({
                             key={`header-${header}-${index}`}
                             onResizeStart={resizeColumn}
                             width={columnWidths[header] || defaultColumnWidth(header)}
-                            tooltip={calculateHeaderTooltip(header, tableRecords, sourceRecords)}
+                            tooltip={headerTooltips[header] || ""}
                           />
                         ))}
                       </tr>
@@ -1371,6 +1375,13 @@ function calculateHeaderTooltip(header, records, sourceRecords) {
     }
   });
   return `Cantidad de items: ${count}${sourceDetail}`;
+}
+
+function buildHeaderTooltips(headers, records, sourceRecords) {
+  return headers.reduce((tooltips, header) => {
+    tooltips[header] = calculateHeaderTooltip(header, records, sourceRecords);
+    return tooltips;
+  }, {});
 }
 
 function buildHeaderSourceDetail(header, records) {

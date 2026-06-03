@@ -41,6 +41,11 @@ button:disabled {
   opacity: 0.55;
 }
 
+.secondary-button {
+  background: transparent;
+  color: var(--muted);
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -177,6 +182,11 @@ button:disabled {
 .sync-card span {
   font-size: 13px;
   color: #cbd5dc;
+}
+
+.sync-card .secondary-button {
+  color: #cbd5dc;
+  border-color: #3b4b59;
 }
 
 .workspace {

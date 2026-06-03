@@ -44,6 +44,7 @@ const LINKED_EMAILS_HEADERS = ["CORREOS EMISOR", "CORREOS RECEPTORES"];
 const CHANGES_SHEET = "Cambios";
 const CHANGES_HEADERS = ["documento", "Hoja", "donde se hizo el cambio", "cambio anterio", "cambio actual"];
 const CHANGE_DIGEST_THRESHOLD = 5;
+const MAX_TRACKED_CHANGE_VALUE_LENGTH = 180;
 
 function App() {
   const [sources, setSources] = useState(loadSources);
@@ -866,7 +867,8 @@ function buildOtFieldSnapshot(records) {
 function buildComparableRecordFields(record) {
   return (record.headers || []).reduce((fields, header) => {
     if (normalizeText(header) === "estado") return fields;
-    fields[header] = normalizeComparableValue(record.cells?.[header]);
+    const value = normalizeComparableValue(record.cells?.[header]);
+    if (value) fields[header] = value;
     return fields;
   }, {});
 }
@@ -877,9 +879,11 @@ function collectOtFieldChanges(previousSnapshot, currentSnapshot) {
     const previous = previousSnapshot[recordKey];
     if (!previous) return;
     if (normalizeOtForReminder(previous.ot) !== normalizeOtForReminder(current.ot)) return;
-    Object.entries(current.fields || {}).forEach(([field, newValue]) => {
-      const previousFields = previous.fields || {};
-      if (!Object.prototype.hasOwnProperty.call(previousFields, field)) return;
+    const currentFields = current.fields || {};
+    const previousFields = previous.fields || {};
+    const fields = new Set([...Object.keys(previousFields), ...Object.keys(currentFields)]);
+    fields.forEach((field) => {
+      const newValue = currentFields[field] || "";
       const previousValue = previousFields[field];
       if (normalizeComparableValue(previousValue) === normalizeComparableValue(newValue)) return;
       changes.push({
@@ -1017,7 +1021,10 @@ function getRecordCellByAliases(record, aliases) {
 }
 
 function normalizeComparableValue(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > MAX_TRACKED_CHANGE_VALUE_LENGTH
+    ? `${text.slice(0, MAX_TRACKED_CHANGE_VALUE_LENGTH - 3)}...`
+    : text;
 }
 
 function normalizeOtForReminder(value) {

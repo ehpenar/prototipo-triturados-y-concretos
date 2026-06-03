@@ -170,5 +170,14 @@ export function loadStored(key, fallback) {
 }
 
 export function saveStored(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    try {
+      localStorage.removeItem(key);
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (retryError) {
+      console.warn(`No se pudo guardar ${key} en localStorage:`, retryError || error);
+    }
+  }
 }

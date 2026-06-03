@@ -45,6 +45,33 @@ const CHANGES_SHEET = "Cambios";
 const CHANGES_HEADERS = ["documento", "Hoja", "donde se hizo el cambio", "cambio anterio", "cambio actual"];
 const CHANGE_DIGEST_THRESHOLD = 5;
 const MAX_TRACKED_CHANGE_VALUE_LENGTH = 180;
+const MAX_TRACKED_FIELDS_PER_RECORD = 24;
+const GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state_v2";
+const LEGACY_GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state";
+const TRACKED_CHANGE_FIELD_KEYWORDS = [
+  "ot",
+  "sp",
+  "orden",
+  "compra",
+  "valor",
+  "costo",
+  "total",
+  "proveedor",
+  "fecha",
+  "equipo",
+  "actividad",
+  "descripcion",
+  "fallo",
+  "comentario",
+  "area",
+  "solicita",
+  "responsable",
+  "colaborador",
+  "tecnico",
+  "facturacion",
+  "repuesto",
+  "entrega",
+];
 
 function App() {
   const [sources, setSources] = useState(loadSources);
@@ -86,7 +113,7 @@ function App() {
   const globalOtChangeSendInProgressRef = useRef(false);
   const reminderStateRef = useRef(loadStored("operation_ai_reminder_delivery_state", {}));
   const globalStatusStateRef = useRef(loadStored("operation_ai_global_status_state", {}));
-  const globalOtChangeStateRef = useRef(loadStored("operation_ai_global_ot_change_state", {}));
+  const globalOtChangeStateRef = useRef(loadStored(GLOBAL_OT_CHANGE_STATE_KEY, {}));
 
   const filteredRecords = useMemo(() => {
     const query = normalizeText(search);
@@ -121,6 +148,10 @@ function App() {
   useEffect(() => {
     saveStored("operation_ai_notification_config", notificationConfig);
   }, [notificationConfig]);
+
+  useEffect(() => {
+    cleanupLegacyOtChangeState();
+  }, []);
 
   useEffect(() => {
     syncAll();
@@ -171,7 +202,7 @@ function App() {
   };
 
   const saveGlobalOtChangeState = () => {
-    saveStored("operation_ai_global_ot_change_state", globalOtChangeStateRef.current);
+    saveStored(GLOBAL_OT_CHANGE_STATE_KEY, globalOtChangeStateRef.current);
   };
 
   const updateNotificationConfig = (updater) => {
@@ -829,6 +860,14 @@ function uniqueEmails(emails) {
   });
 }
 
+function cleanupLegacyOtChangeState() {
+  try {
+    localStorage.removeItem(LEGACY_GLOBAL_OT_CHANGE_STATE_KEY);
+  } catch {
+    // Ignore cleanup errors; the compact v2 key is used from now on.
+  }
+}
+
 function buildStatusSnapshot(records) {
   return records.reduce((snapshot, record) => {
     const status = getRecordStatus(record);
@@ -850,7 +889,7 @@ function buildOtFieldSnapshot(records) {
   return records.reduce((snapshot, record) => {
     const ot = getRecordOtFromRecord(record);
     if (!ot) return snapshot;
-    const key = getRecordStatusKey(record);
+    const key = getCompactRecordKey(record);
     snapshot[key] = {
       ot,
       sourceName: record.sourceName || "",
@@ -865,7 +904,7 @@ function buildOtFieldSnapshot(records) {
 }
 
 function buildComparableRecordFields(record) {
-  return (record.headers || []).reduce((fields, header) => {
+  return (record.headers || []).filter(isTrackedChangeField).slice(0, MAX_TRACKED_FIELDS_PER_RECORD).reduce((fields, header) => {
     if (normalizeText(header) === "estado") return fields;
     const value = normalizeComparableValue(record.cells?.[header]);
     if (value) fields[header] = value;
@@ -905,6 +944,24 @@ function collectOtFieldChanges(previousSnapshot, currentSnapshot) {
 
 function getRecordStatusKey(record) {
   return `${record.sourceId}:${record.sheetName}:${record.rowNumber}`;
+}
+
+function getCompactRecordKey(record) {
+  return [
+    shortId(record.sourceId),
+    normalizeText(record.sheetName).replace(/\s+/g, "_").slice(0, 36),
+    record.rowNumber,
+  ].filter(Boolean).join(":");
+}
+
+function shortId(value) {
+  return String(value || "").slice(-10);
+}
+
+function isTrackedChangeField(header) {
+  const normalized = normalizeText(header);
+  if (!normalized || normalized === "estado") return false;
+  return TRACKED_CHANGE_FIELD_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
 function shouldTrackStatus(note) {

@@ -253,7 +253,7 @@ function rowsEqual(left, right, length) {
   return true;
 }
 
-export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt = true) {
+export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt = true, authRetried = false) {
   const headers = { ...(options.headers || {}) };
   if (options.body) headers["Content-Type"] = "application/json";
   if (tokenRef.current && isStoredGoogleTokenExpired()) {
@@ -263,20 +263,24 @@ export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt =
   if (tokenRef.current) headers.Authorization = `Bearer ${tokenRef.current}`;
   const response = await fetch(url, { ...options, headers });
   if (response.status === 401 || response.status === 403) {
+    const detail = await response.text();
     clearStoredGoogleToken();
     tokenRef.current = "";
+    if (authRetried) {
+      throw new Error(buildGoogleAuthError(response.status, detail));
+    }
     if (!allowAuthPrompt) {
       try {
         const token = await requestGoogleToken("");
         tokenRef.current = token;
-        return googleFetch(url, tokenRef, options, allowAuthPrompt);
+        return googleFetch(url, tokenRef, options, allowAuthPrompt, true);
       } catch {
         throw new Error("Autorizacion requerida. Pulsa Sincronizar para iniciar sesion con Google.");
       }
     }
     const token = await requestGoogleTokenWithFallback();
     tokenRef.current = token;
-    return googleFetch(url, tokenRef, options, allowAuthPrompt);
+    return googleFetch(url, tokenRef, options, allowAuthPrompt, true);
   }
   if (!response.ok) {
     const detail = await response.text();
@@ -327,8 +331,16 @@ async function requestGoogleTokenWithFallback() {
   try {
     return await requestGoogleToken("");
   } catch {
-    return requestGoogleToken("consent");
+    return requestGoogleToken("select_account consent");
   }
+}
+
+function buildGoogleAuthError(status, detail) {
+  const text = String(detail || "");
+  if (status === 403) {
+    return `Google API 403: la cuenta autorizada no tiene acceso a este archivo. Usa Sincronizar y selecciona una cuenta con permisos, o comparte el Google Sheet con esa cuenta. ${text.slice(0, 120)}`;
+  }
+  return `Google API ${status}: autorizacion requerida. ${text.slice(0, 160)}`;
 }
 
 function persistGoogleToken(tokenResponse) {

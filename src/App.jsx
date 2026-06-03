@@ -9,6 +9,7 @@ import {
   extractSpreadsheetId,
 } from "./utils/helpers.js";
 import {
+  appendSheetRow,
   createSheetWithHeaders,
   getStoredGoogleToken,
   loadSpreadsheet,
@@ -40,6 +41,9 @@ import { Settings } from "./views/Settings.jsx";
 
 const LINKED_EMAILS_SHEET = "Correos vinculados";
 const LINKED_EMAILS_HEADERS = ["CORREOS EMISOR", "CORREOS RECEPTORES"];
+const CHANGES_SHEET = "Cambios";
+const CHANGES_HEADERS = ["documento", "Hoja", "donde se hizo el cambio", "cambio anterio", "cambio actual"];
+const CHANGE_DIGEST_THRESHOLD = 5;
 
 function App() {
   const [sources, setSources] = useState(loadSources);
@@ -179,12 +183,6 @@ function App() {
 
   async function processGlobalStatusChanges() {
     if (globalStatusSendInProgressRef.current || !records.length) return;
-    const recipients = getConfiguredEmailRecipients(notificationConfig);
-    if (!recipients) {
-      initializeGlobalStatusBaseline(records);
-      return;
-    }
-
     const currentStatuses = buildStatusSnapshot(records);
     const previousStatuses = globalStatusStateRef.current || {};
     const hasPreviousBaseline = Object.keys(previousStatuses).length > 0;
@@ -210,40 +208,29 @@ function App() {
 
     globalStatusSendInProgressRef.current = true;
     try {
-      for (const change of changes) {
-        try {
-          await sendGmailMessage({
-            from: notificationConfig.senderEmail,
-            to: recipients,
-            subject: `Cambio de estado OT ${change.ot || ""}`.trim(),
-            message: buildAutomaticStatusChangeMessage(change),
-          }, tokenRef);
-          addLog(`Cambio de ESTADO enviado por email: ${change.ot || change.recordLabel}.`);
-        } catch (error) {
-          addLog(`Error enviando cambio de ESTADO: ${error.message}`);
-        }
+      const recipients = getConfiguredEmailRecipients(notificationConfig);
+      if (recipients) {
+        await sendChangeNotifications({
+          changes,
+          recipients,
+          getSubject: (change) => `Cambio de estado OT ${change.ot || ""}`.trim(),
+          getMessage: buildAutomaticStatusChangeMessage,
+          digestSubject: `Resumen de cambios de estado (${changes.length})`,
+          digestTitle: "Resumen automatico de cambios de estado",
+          logLabel: "Cambio de ESTADO",
+        });
+      } else {
+        addLog(`Cambios de ESTADO detectados sin correo configurado: ${changes.length}.`);
       }
+      await persistDetectedChanges(changes.map(mapStatusChangeToSheetRow));
     } finally {
       globalStatusSendInProgressRef.current = false;
     }
   }
 
-  function initializeGlobalStatusBaseline(currentRecords) {
-    const currentStatuses = buildStatusSnapshot(currentRecords);
-    if (!Object.keys(globalStatusStateRef.current || {}).length && Object.keys(currentStatuses).length) {
-      globalStatusStateRef.current = currentStatuses;
-      saveGlobalStatusState();
-    }
-  }
-
   async function processGlobalOtFieldChanges() {
     if (globalOtChangeSendInProgressRef.current || !records.length) return;
-    const recipients = getConfiguredEmailRecipients(notificationConfig);
     const currentSnapshot = buildOtFieldSnapshot(records);
-    if (!recipients) {
-      initializeGlobalOtFieldBaseline(currentSnapshot);
-      return;
-    }
 
     const previousSnapshot = globalOtChangeStateRef.current || {};
     const hasPreviousBaseline = Object.keys(previousSnapshot).length > 0;
@@ -260,28 +247,82 @@ function App() {
 
     globalOtChangeSendInProgressRef.current = true;
     try {
-      for (const change of changes) {
-        try {
-          await sendGmailMessage({
-            from: notificationConfig.senderEmail,
-            to: recipients,
-            subject: `Cambio en OT ${change.ot || ""}`.trim(),
-            message: buildAutomaticOtFieldChangeMessage(change),
-          }, tokenRef);
-          addLog(`Cambio en OT enviado por email: ${change.ot || change.recordLabel} / ${change.field}.`);
-        } catch (error) {
-          addLog(`Error enviando cambio en OT: ${error.message}`);
-        }
+      const recipients = getConfiguredEmailRecipients(notificationConfig);
+      if (recipients) {
+        await sendChangeNotifications({
+          changes,
+          recipients,
+          getSubject: (change) => `Cambio en OT ${change.ot || ""}`.trim(),
+          getMessage: buildAutomaticOtFieldChangeMessage,
+          digestSubject: `Resumen de cambios en OT (${changes.length})`,
+          digestTitle: "Resumen automatico de cambios en OT",
+          logLabel: "Cambio en OT",
+        });
+      } else {
+        addLog(`Cambios en OT detectados sin correo configurado: ${changes.length}.`);
       }
+      await persistDetectedChanges(changes.map(mapOtFieldChangeToSheetRow));
     } finally {
       globalOtChangeSendInProgressRef.current = false;
     }
   }
 
-  function initializeGlobalOtFieldBaseline(currentSnapshot) {
-    if (!Object.keys(globalOtChangeStateRef.current || {}).length && Object.keys(currentSnapshot).length) {
-      globalOtChangeStateRef.current = currentSnapshot;
-      saveGlobalOtChangeState();
+  async function sendChangeNotifications({
+    changes,
+    recipients,
+    getSubject,
+    getMessage,
+    digestSubject,
+    digestTitle,
+    logLabel,
+  }) {
+    if (changes.length > CHANGE_DIGEST_THRESHOLD) {
+      try {
+        await sendGmailMessage({
+          from: notificationConfig.senderEmail,
+          to: recipients,
+          subject: digestSubject,
+          message: buildChangeDigestMessage(digestTitle, changes, getMessage),
+        }, tokenRef);
+        addLog(`${logLabel}: resumen consolidado enviado por email con ${changes.length} cambios.`);
+      } catch (error) {
+        addLog(`Error enviando resumen de ${logLabel}: ${error.message}`);
+      }
+      return;
+    }
+
+    for (const change of changes) {
+      try {
+        await sendGmailMessage({
+          from: notificationConfig.senderEmail,
+          to: recipients,
+          subject: getSubject(change),
+          message: getMessage(change),
+        }, tokenRef);
+        addLog(`${logLabel} enviado por email: ${change.ot || change.recordLabel}.`);
+      } catch (error) {
+        addLog(`Error enviando ${logLabel}: ${error.message}`);
+      }
+    }
+  }
+
+  async function persistDetectedChanges(rows) {
+    if (!rows.length) return;
+    const summarySource = sources.find((source) => normalizeText(source.name).includes(normalizeText("Resumen Financiero OTS")));
+    const spreadsheetId = extractSpreadsheetId(summarySource?.url);
+    if (!spreadsheetId) {
+      addLog("Registro de cambios omitido: no se encontro HOJA RESUMEN FINANCIERO OTS.");
+      return;
+    }
+
+    try {
+      await createSheetWithHeaders(spreadsheetId, CHANGES_SHEET, CHANGES_HEADERS, tokenRef);
+      for (const row of rows) {
+        await appendSheetRow(spreadsheetId, CHANGES_SHEET, CHANGES_HEADERS, row, tokenRef);
+      }
+      addLog(`Cambios registrados en HOJA RESUMEN FINANCIERO OTS / ${CHANGES_SHEET}: ${rows.length}.`);
+    } catch (error) {
+      addLog(`Error registrando cambios en ${CHANGES_SHEET}: ${error.message}`);
     }
   }
 
@@ -795,6 +836,9 @@ function buildStatusSnapshot(records) {
     snapshot[key] = {
       status,
       ot: getRecordOtFromRecord(record),
+      sourceName: record.sourceName || "",
+      sheetName: record.sheetName || "",
+      rowNumber: record.rowNumber || "",
       recordLabel: `${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}`,
     };
     return snapshot;
@@ -842,6 +886,7 @@ function collectOtFieldChanges(previousSnapshot, currentSnapshot) {
         ot: current.ot,
         documentName: current.sourceName,
         sheetName: current.sheetName,
+        rowNumber: current.rowNumber,
         field,
         previousValue,
         newValue,
@@ -1037,6 +1082,56 @@ function buildAutomaticOtFieldChangeMessage(change) {
     `Usuario responsable: ${change.userResponsible || "NO DISPONIBLE"}`,
     change.recordLabel ? `Registro: ${change.recordLabel}` : "",
   ].filter(Boolean).join("\n");
+}
+
+function buildChangeDigestMessage(title, changes, getMessage) {
+  return [
+    title,
+    "",
+    `Total de cambios detectados: ${changes.length}`,
+    "",
+    ...changes.flatMap((change, index) => [
+      `--- Cambio ${index + 1} ---`,
+      getMessage(change),
+      "",
+    ]),
+  ].join("\n");
+}
+
+function mapStatusChangeToSheetRow(change) {
+  return {
+    documento: change.sourceName || extractDocumentFromRecordLabel(change.recordLabel),
+    Hoja: change.sheetName || extractSheetFromRecordLabel(change.recordLabel),
+    "donde se hizo el cambio": buildChangeLocation(change, "ESTADO"),
+    "cambio anterio": formatChangeValue(change.previousStatus),
+    "cambio actual": formatChangeValue(change.status),
+  };
+}
+
+function mapOtFieldChangeToSheetRow(change) {
+  return {
+    documento: change.documentName || extractDocumentFromRecordLabel(change.recordLabel),
+    Hoja: change.sheetName || extractSheetFromRecordLabel(change.recordLabel),
+    "donde se hizo el cambio": buildChangeLocation(change, change.field),
+    "cambio anterio": formatChangeValue(change.previousValue),
+    "cambio actual": formatChangeValue(change.newValue),
+  };
+}
+
+function buildChangeLocation(change, field) {
+  return [
+    change.ot ? `OT ${change.ot}` : "",
+    field || "",
+    change.rowNumber ? `fila ${change.rowNumber}` : "",
+  ].filter(Boolean).join(" / ") || change.recordLabel || "NO ESPECIFICADO";
+}
+
+function extractDocumentFromRecordLabel(label) {
+  return String(label || "").split(" / ")[0] || "";
+}
+
+function extractSheetFromRecordLabel(label) {
+  return String(label || "").split(" / ")[1] || "";
 }
 
 function formatChangeValue(value) {

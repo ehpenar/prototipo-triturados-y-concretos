@@ -85,6 +85,7 @@ VITE_GOOGLE_CLIENT_ID=...
 - La ejecucion de recordatorios respeta el rango configurado: no envia antes de `FECHA INICIO` ni despues de `FECHA FINALIZACION`; los recordatorios mensuales se envian una vez al mes segun el dia definido en la fecha del recordatorio o en la fecha de inicio.
 - Los cambios en columnas `ESTADO` se monitorean globalmente. Cuando la app sincroniza y detecta un estado distinto al ultimo observado, envia un correo automatico a los receptores configurados.
 - Ademas del monitoreo de `ESTADO`, la app mantiene una linea base separada para cambios generales en campos asociados a una OT. Cuando un dato real cambia en cualquier documento con OT, envia un correo con OT, documento, hoja, campo modificado, valor anterior, valor nuevo, fecha/hora y usuario responsable si esta disponible, sin duplicar la notificacion existente de `ESTADO`.
+- Si en una misma sincronizacion se detectan mas de 5 cambios de estado o mas de 5 cambios generales de OT, la app envia un solo correo consolidado con el resumen completo en lugar de un correo por cada cambio. Todos los cambios detectados se registran tambien en `HOJA RESUMEN FINANCIERO OTS / Cambios` con documento, hoja, ubicacion del cambio, valor anterior y valor actual.
 - Los recordatorios por email siguen disponibles: `Diario` se envia a las 12:00, `Semanal` se envia los viernes a las 12:00 y `Cambio de estado` envia una plantilla con estado anterior y nuevo.
 
 ## Integraciones

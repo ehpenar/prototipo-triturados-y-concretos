@@ -12,6 +12,7 @@ import {
   appendSheetRow,
   clearGoogleSession,
   createSheetWithHeaders,
+  fetchSheetValues,
   getStoredGoogleToken,
   loadSpreadsheet,
   sendGmailMessage,
@@ -43,7 +44,7 @@ import { Settings } from "./views/Settings.jsx";
 const LINKED_EMAILS_SHEET = "Correos vinculados";
 const LINKED_EMAILS_HEADERS = ["CORREOS EMISOR", "CORREOS RECEPTORES"];
 const CHANGES_SHEET = "Cambios";
-const CHANGES_HEADERS = ["documento", "Hoja", "donde se hizo el cambio", "cambio anterio", "cambio actual"];
+const CHANGES_HEADERS = ["documento", "Hoja", "donde se hizo el cambio", "cambio anterio", "cambio actual", "enviado"];
 const CHANGE_DIGEST_THRESHOLD = 5;
 const MAX_TRACKED_CHANGE_VALUE_LENGTH = 80;
 const MAX_TRACKED_FIELDS_PER_RECORD = 12;
@@ -248,21 +249,26 @@ function App() {
 
     globalStatusSendInProgressRef.current = true;
     try {
+      const changeRows = changes.map(mapStatusChangeToSheetRow);
+      const pending = await prepareDetectedChanges(changeRows);
+      if (!pending.spreadsheetId || !pending.pendingRows.length) return;
+      const pendingChanges = pending.pendingIndexes.map((index) => changes[index]);
       const recipients = getConfiguredEmailRecipients(notificationConfig);
+      let sentIndexes = new Set();
       if (recipients) {
-        await sendChangeNotifications({
-          changes,
+        sentIndexes = await sendChangeNotifications({
+          changes: pendingChanges,
           recipients,
           getSubject: (change) => `Cambio de estado OT ${change.ot || ""}`.trim(),
           getMessage: buildAutomaticStatusChangeMessage,
-          digestSubject: `Resumen de cambios de estado (${changes.length})`,
+          digestSubject: `Resumen de cambios de estado (${pendingChanges.length})`,
           digestTitle: "Resumen automatico de cambios de estado",
           logLabel: "Cambio de ESTADO",
         });
       } else {
-        addLog(`Cambios de ESTADO detectados sin correo configurado: ${changes.length}.`);
+        addLog(`Cambios de ESTADO detectados sin correo configurado: ${pendingChanges.length}.`);
       }
-      await persistDetectedChanges(changes.map(mapStatusChangeToSheetRow));
+      await persistDetectedChanges(pending.spreadsheetId, markRowsAsSent(pending.pendingRows, sentIndexes));
     } finally {
       globalStatusSendInProgressRef.current = false;
     }
@@ -287,21 +293,26 @@ function App() {
 
     globalOtChangeSendInProgressRef.current = true;
     try {
+      const changeRows = changes.map(mapOtFieldChangeToSheetRow);
+      const pending = await prepareDetectedChanges(changeRows);
+      if (!pending.spreadsheetId || !pending.pendingRows.length) return;
+      const pendingChanges = pending.pendingIndexes.map((index) => changes[index]);
       const recipients = getConfiguredEmailRecipients(notificationConfig);
+      let sentIndexes = new Set();
       if (recipients) {
-        await sendChangeNotifications({
-          changes,
+        sentIndexes = await sendChangeNotifications({
+          changes: pendingChanges,
           recipients,
           getSubject: (change) => `Cambio en OT ${change.ot || ""}`.trim(),
           getMessage: buildAutomaticOtFieldChangeMessage,
-          digestSubject: `Resumen de cambios en OT (${changes.length})`,
+          digestSubject: `Resumen de cambios en OT (${pendingChanges.length})`,
           digestTitle: "Resumen automatico de cambios en OT",
           logLabel: "Cambio en OT",
         });
       } else {
-        addLog(`Cambios en OT detectados sin correo configurado: ${changes.length}.`);
+        addLog(`Cambios en OT detectados sin correo configurado: ${pendingChanges.length}.`);
       }
-      await persistDetectedChanges(changes.map(mapOtFieldChangeToSheetRow));
+      await persistDetectedChanges(pending.spreadsheetId, markRowsAsSent(pending.pendingRows, sentIndexes));
     } finally {
       globalOtChangeSendInProgressRef.current = false;
     }
@@ -316,6 +327,7 @@ function App() {
     digestTitle,
     logLabel,
   }) {
+    const sentIndexes = new Set();
     if (changes.length > CHANGE_DIGEST_THRESHOLD) {
       try {
         await sendGmailMessage({
@@ -325,13 +337,14 @@ function App() {
           message: buildChangeDigestMessage(digestTitle, changes, getMessage),
         }, tokenRef);
         addLog(`${logLabel}: resumen consolidado enviado por email con ${changes.length} cambios.`);
+        changes.forEach((_, index) => sentIndexes.add(index));
       } catch (error) {
         addLog(`Error enviando resumen de ${logLabel}: ${error.message}`);
       }
-      return;
+      return sentIndexes;
     }
 
-    for (const change of changes) {
+    for (const [index, change] of changes.entries()) {
       try {
         await sendGmailMessage({
           from: notificationConfig.senderEmail,
@@ -340,21 +353,47 @@ function App() {
           message: getMessage(change),
         }, tokenRef);
         addLog(`${logLabel} enviado por email: ${change.ot || change.recordLabel}.`);
+        sentIndexes.add(index);
       } catch (error) {
         addLog(`Error enviando ${logLabel}: ${error.message}`);
       }
     }
+    return sentIndexes;
   }
 
-  async function persistDetectedChanges(rows) {
+  async function prepareDetectedChanges(rows) {
     if (!rows.length) return;
     const summarySource = sources.find((source) => normalizeText(source.name).includes(normalizeText("Resumen Financiero OTS")));
     const spreadsheetId = extractSpreadsheetId(summarySource?.url);
     if (!spreadsheetId) {
       addLog("Registro de cambios omitido: no se encontro HOJA RESUMEN FINANCIERO OTS.");
-      return;
+      return { spreadsheetId: "", pendingRows: [], pendingIndexes: [] };
     }
 
+    try {
+      await createSheetWithHeaders(spreadsheetId, CHANGES_SHEET, CHANGES_HEADERS, tokenRef);
+      const existingRows = await fetchSheetValues(spreadsheetId, CHANGES_SHEET, tokenRef);
+      const sentChangeKeys = buildSentChangeKeys(existingRows);
+      const pendingRows = [];
+      const pendingIndexes = [];
+      rows.forEach((row, index) => {
+        if (sentChangeKeys.has(buildChangeRowKey(row))) return;
+        pendingRows.push(row);
+        pendingIndexes.push(index);
+      });
+      const skipped = rows.length - pendingRows.length;
+      if (skipped > 0) {
+        addLog(`Cambios omitidos por ${CHANGES_SHEET}/enviado=si: ${skipped}.`);
+      }
+      return { spreadsheetId, pendingRows, pendingIndexes };
+    } catch (error) {
+      addLog(`Error revisando ${CHANGES_SHEET}: ${error.message}`);
+      return { spreadsheetId, pendingRows: rows, pendingIndexes: rows.map((_, index) => index) };
+    }
+  }
+
+  async function persistDetectedChanges(spreadsheetId, rows) {
+    if (!spreadsheetId || !rows.length) return;
     try {
       await createSheetWithHeaders(spreadsheetId, CHANGES_SHEET, CHANGES_HEADERS, tokenRef);
       for (const row of rows) {
@@ -1205,6 +1244,50 @@ function mapOtFieldChangeToSheetRow(change) {
     "cambio anterio": formatChangeValue(change.previousValue),
     "cambio actual": formatChangeValue(change.newValue),
   };
+}
+
+function markRowsAsSent(rows, sentIndexes) {
+  return rows.map((row, index) => ({
+    ...row,
+    enviado: sentIndexes.has(index) ? "si" : "",
+  }));
+}
+
+function buildSentChangeKeys(values) {
+  const headers = values?.[0] || [];
+  if (!headers.length) return new Set();
+  return new Set(
+    values.slice(1)
+      .map((row) => rowToChangeObject(headers, row))
+      .filter((row) => isSentValue(row.enviado))
+      .map(buildChangeRowKey),
+  );
+}
+
+function rowToChangeObject(headers, row) {
+  return CHANGES_HEADERS.reduce((object, header) => {
+    const index = findHeaderIndex(headers, header);
+    object[header] = index >= 0 ? row[index] || "" : "";
+    return object;
+  }, {});
+}
+
+function findHeaderIndex(headers, targetHeader) {
+  return headers.findIndex((header) => normalizeText(header) === normalizeText(targetHeader));
+}
+
+function isSentValue(value) {
+  return normalizeText(value) === "si";
+}
+
+function buildChangeRowKey(row) {
+  return [
+    row.documento,
+    row.Hoja,
+    row["donde se hizo el cambio"],
+    row["cambio anterio"],
+    row["cambio actual"],
+  ].map((value) => normalizeText(value)).join("|");
 }
 
 function buildChangeLocation(change, field) {

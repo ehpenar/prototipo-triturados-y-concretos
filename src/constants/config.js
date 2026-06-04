@@ -28,17 +28,17 @@ export const CONFIG = {
   },
   initialSources: [
     {
-      name: "Copia de Matriz de Seguimiento (respuestas)",
+      name: "Matriz de Seguimiento",
       url: "https://docs.google.com/spreadsheets/d/1unDKs0l1TNC_3IuV_zYE1ChslZMKaK9TlMlFwbpvK6Q/edit?usp=sharing",
       roleHint: "compras solicitudes repuestos proveedores costos estados fechas",
     },
     {
-      name: "Copia de ORDENES DE TRABAJO TYC",
+      name: "ORDENES DE TRABAJO TYC",
       url: "https://docs.google.com/spreadsheets/d/1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns/edit?usp=sharing",
       roleHint: "ordenes trabajo equipos areas fallas prioridades responsables estados",
     },
     {
-      name: "Copia de REPORTE DE ACTIVIDADES MANTENIMIENTO (respuestas)",
+      name: "REPORTE DE ACTIVIDADES MANTENIMIENTO",
       url: "https://docs.google.com/spreadsheets/d/1uAqIY0SpBLDeHEMrUK709rlvkpw4EJIhuVl7eR8tbVo/edit?usp=sharing",
       roleHint: "actividades tecnicos horas equipos observaciones ot",
     },

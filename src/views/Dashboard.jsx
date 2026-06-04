@@ -5,7 +5,7 @@ import { EmptyState } from "../components/EmptyState.jsx";
 
 const WORK_ORDERS_SPREADSHEET_ID = "1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns";
 const WORK_ORDERS_SHEET_ID = "1862269386";
-const WORK_ORDERS_SOURCE_NAME = "Copia de ORDENES DE TRABAJO TYC";
+const WORK_ORDERS_SOURCE_NAME = "ORDENES DE TRABAJO TYC";
 const WORK_ORDERS_SHEET_NAME = "copia de prueba respuestas de formulario 1";
 
 export function Dashboard({ documents, records, alerts, rankingMode, setRankingMode, runAnalysis }) {
@@ -21,7 +21,7 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
     <section className="view active">
       <div className="kpi-grid">
         <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} />
-        <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en Copia de ORDENES DE TRABAJO TYC" />
+        <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en ORDENES DE TRABAJO TYC" />
         <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint="FACTURACION + Matriz de Seguimiento" />
         <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint="Horas reconocidas en reportes" />
         <Kpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" />

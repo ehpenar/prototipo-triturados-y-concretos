@@ -638,7 +638,7 @@ export function Records({
               {/* SECTION 1B: DATOS DE LA ORDEN DE TRABAJO */}
               <div style={{ background: "#f8fafc", border: "1px solid var(--line)", borderRadius: "12px", padding: "20px" }}>
                 <h3 style={{ margin: "0 0 16px 0", fontSize: "14px", color: "var(--ink)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700" }}>
-                  🧾 Datos de la Orden de Trabajo (Copia de ORDENES DE TRABAJO TYC)
+                  🧾 Datos de la Orden de Trabajo (ORDENES DE TRABAJO TYC)
                 </h3>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
                   {detailedWorkOrderFields.slice(0, 6).map((field) => (
@@ -1067,8 +1067,8 @@ function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecor
     ot,
     fuente: {
       resumenFinanciero: "Resumen Financiero OTS / Hoja 2",
-      ordenTrabajo: "Copia de ORDENES DE TRABAJO TYC / Respuestas de formulario 1",
-      matrizSeguimiento: "Copia de Matriz de Seguimiento / respuestas",
+      ordenTrabajo: "ORDENES DE TRABAJO TYC / Respuestas de formulario 1",
+      matrizSeguimiento: "Matriz de Seguimiento",
     },
     datosGeneralesOT,
     datosOrdenTrabajoTYC,

@@ -14,10 +14,13 @@ export function Reports({
 }) {
   const [instruction, setInstruction] = useState("Genera un informe ejecutivo de mantenimiento con costos, alertas, equipos criticos y recomendaciones.");
   const [status, setStatus] = useState("");
+  const isGenerating = status === "Generando informe...";
 
   const generateReport = async () => {
+    if (isGenerating) return;
     setStatus("Generando informe...");
     try {
+      await yieldToBrowser();
       const text = await generateAiReport(instruction, records, relations, alerts, documents);
       setReports((current) => [{ id: createId(), instruction, text, createdAt: new Date().toISOString(), status: "Generado" }, ...current]);
       setStatus("Informe generado");
@@ -55,7 +58,9 @@ export function Reports({
         </div>
         <div className="report-composer">
           <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} />
-          <button type="button" onClick={generateReport}>Generar informe</button>
+          <button disabled={isGenerating} type="button" onClick={generateReport}>
+            {isGenerating ? "Generando..." : "Generar informe"}
+          </button>
         </div>
       </section>
       <section className="panel">
@@ -81,4 +86,14 @@ export function Reports({
       </section>
     </section>
   );
+}
+
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
 }

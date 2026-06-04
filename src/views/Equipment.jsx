@@ -1,16 +1,18 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { normalizeText, formatMoney, cleanKey } from "../utils/helpers.js";
 import { relationKey } from "../utils/analysis.js";
 import { EmptyState } from "../components/EmptyState.jsx";
 import { Chips } from "../components/Chips.jsx";
 
 export function Equipment({ relations, equipmentSearch, setEquipmentSearch }) {
-  const query = normalizeText(equipmentSearch);
-  const equipmentRelations = relations
-    .filter((relation) => relation.kind === "equipment")
-    .filter((relation) => !query || normalizeText(relation.key).includes(query))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 30);
+  const equipmentRelations = useMemo(() => {
+    const query = normalizeText(equipmentSearch);
+    return relations
+      .filter((relation) => relation.kind === "equipment")
+      .filter((relation) => !query || normalizeText(relation.key).includes(query))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30);
+  }, [relations, equipmentSearch]);
 
   return (
     <section className="view active">

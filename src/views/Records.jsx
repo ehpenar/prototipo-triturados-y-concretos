@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { CONFIG } from "../constants/config.js";
 import { columnName, createId, extractSpreadsheetId, normalizeText } from "../utils/helpers.js";
 import {
@@ -49,6 +49,7 @@ export function Records({
   const [reportEmailRecipients, setReportEmailRecipients] = useState([]);
   const [otReports, setOtReports] = useState({});
   const targetRecords = useMemo(() => records, [records]);
+  const sourceRecordIndexes = useMemo(() => buildSourceRecordIndexes(sourceRecords), [sourceRecords]);
   const otOptions = useMemo(() => {
     const values = sourceRecords.filter((record) => isTargetRecord(record)).map(getRecordOt).filter(Boolean);
     return [...new Set(values)].sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
@@ -66,20 +67,41 @@ export function Records({
   const totalPages = Math.max(1, Math.ceil(tableRecords.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const pageRecords = useMemo(() => tableRecords.slice((safePage - 1) * pageSize, safePage * pageSize), [tableRecords, safePage, pageSize]);
+  const tableRecordsByUid = useMemo(() => new Map(tableRecords.map((record) => [record.uid, record])), [tableRecords]);
   const headerTooltips = useMemo(
-    () => buildHeaderTooltips(headers, pageRecords, sourceRecords),
-    [headers, pageRecords, sourceRecords],
+    () => buildHeaderTooltips(headers, pageRecords, sourceRecords, sourceRecordIndexes),
+    [headers, pageRecords, sourceRecords, sourceRecordIndexes],
   );
-  const selectedRecord = tableRecords.find((record) => record.uid === selectedRecordId) || null;
-  const detailedRecord = tableRecords.find((record) => record.uid === detailedRecordId) || null;
-  const detailedFinancialRecord = detailedRecord ? findFinancialReportTarget(detailedRecord, sourceRecords)?.record || detailedRecord : null;
-  const detailedWorkOrderRecord = detailedRecord ? findWorkOrderRecord(sourceRecords, getRecordOt(detailedRecord)) || detailedRecord : null;
-  const detailedWorkOrderFields = detailedWorkOrderRecord ? buildWorkOrderDetailFields(detailedWorkOrderRecord) : [];
-  const detailedMatrixRecords = detailedRecord ? getRelatedMatrixRecords(sourceRecords, getRecordOt(detailedRecord)) : [];
-  const detailedMatrixPurchaseTotal = sumMatrixPurchaseValue(detailedMatrixRecords);
-  const detailedReport = detailedRecord
-    ? otReports[detailedRecord.uid] || getCell(detailedFinancialRecord, ["INFORME"], ["informe"])
-    : "";
+  const selectedRecord = tableRecordsByUid.get(selectedRecordId) || null;
+  const detailedRecord = tableRecordsByUid.get(detailedRecordId) || null;
+  const detailedOt = detailedRecord ? getRecordOt(detailedRecord) : "";
+  const detailedFinancialTarget = useMemo(
+    () => (detailedRecord ? findFinancialReportTarget(detailedRecord, sourceRecords, sourceRecordIndexes) : null),
+    [detailedRecord, sourceRecords, sourceRecordIndexes],
+  );
+  const detailedFinancialRecord = detailedFinancialTarget?.record || detailedRecord || null;
+  const detailedWorkOrderRecord = useMemo(
+    () => (detailedRecord ? findWorkOrderRecord(sourceRecords, detailedOt, sourceRecordIndexes) || detailedRecord : null),
+    [detailedRecord, detailedOt, sourceRecords, sourceRecordIndexes],
+  );
+  const detailedWorkOrderFields = useMemo(
+    () => (detailedWorkOrderRecord ? buildWorkOrderDetailFields(detailedWorkOrderRecord) : []),
+    [detailedWorkOrderRecord],
+  );
+  const detailedMatrixRecords = useMemo(
+    () => (detailedRecord ? getRelatedMatrixRecords(sourceRecords, detailedOt, sourceRecordIndexes) : []),
+    [detailedRecord, detailedOt, sourceRecords, sourceRecordIndexes],
+  );
+  const detailedBillingRecords = useMemo(
+    () => (detailedRecord ? getRelatedBillingRecords(sourceRecords, detailedOt, sourceRecordIndexes) : []),
+    [detailedRecord, detailedOt, sourceRecords, sourceRecordIndexes],
+  );
+  const detailedMatrixPurchaseTotal = useMemo(() => sumMatrixPurchaseValue(detailedMatrixRecords), [detailedMatrixRecords]);
+  const detailedReport = useMemo(() => (
+    detailedRecord
+      ? otReports[detailedRecord.uid] || getCell(detailedFinancialRecord, ["INFORME"], ["informe"])
+      : ""
+  ), [detailedRecord, detailedFinancialRecord, otReports]);
   const reportSenderEmails = useMemo(() => getSenderEmails(notificationConfig), [notificationConfig]);
   const reportReceiverEmails = useMemo(() => getReceiverEmails(notificationConfig), [notificationConfig]);
   const selectedSheet = useMemo(() => {
@@ -93,7 +115,7 @@ export function Records({
     [selectedDocumentForFilters],
   );
   const embeddedSheet = useMemo(() => findEmbeddedSheet(documents, filters), [documents, filters]);
-  const embedUrl = buildGoogleSheetsEmbedUrl(embeddedSheet);
+  const embedUrl = useMemo(() => buildGoogleSheetsEmbedUrl(embeddedSheet), [embeddedSheet]);
 
   useEffect(() => {
     if (!filters.document || !documents.length) return;
@@ -121,19 +143,20 @@ export function Records({
   const generateReportForDetailedRecord = async () => {
     if (!detailedRecord) return;
     const ot = getRecordOt(detailedRecord);
-    const target = findFinancialReportTarget(detailedRecord, sourceRecords);
+    const target = findFinancialReportTarget(detailedRecord, sourceRecords, sourceRecordIndexes);
     if (!target?.rowNumber) {
       setReportStatus("No se encontro la fila de Hoja 2 para guardar el informe.");
       return;
     }
     setReportStatus("Generando informe...");
     try {
+      await yieldToBrowser();
       const reportColumn = getFinancialReportColumn(target.record);
       if (!reportColumn) {
         setReportStatus("No se encontro la columna INFORME en Hoja 2.");
         return;
       }
-      const consolidatedData = buildOtReportPayload(detailedRecord, sourceRecords, target.record || detailedRecord);
+      const consolidatedData = buildOtReportPayload(detailedRecord, sourceRecords, target.record || detailedRecord, sourceRecordIndexes);
       const report = await generateOtReport(consolidatedData);
       await updateSheetCell(
         target.spreadsheetId,
@@ -151,6 +174,14 @@ export function Records({
       setReportStatus(`Error generando informe: ${error.message}`);
     }
   };
+
+  const selectRecord = useCallback((recordId) => {
+    setSelectedRecordId(recordId);
+  }, []);
+
+  const showRecordDetail = useCallback((recordId) => {
+    setDetailedRecordId(recordId);
+  }, []);
 
   const toggleReportRecipient = (email) => {
     setReportEmailRecipients((current) => {
@@ -188,7 +219,7 @@ export function Records({
     }
   };
 
-  const resizeColumn = (header, startEvent) => {
+  const resizeColumn = useCallback((header, startEvent) => {
     startEvent.preventDefault();
     const startX = startEvent.clientX;
     const startWidth = columnWidths[header] || defaultColumnWidth(header);
@@ -202,7 +233,7 @@ export function Records({
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-  };
+  }, [columnWidths]);
 
   return (
     <section className="view active records-view">
@@ -412,9 +443,10 @@ export function Records({
                           key={`record-row-${record.uid}-${recordIndex}`}
                           record={record}
                           widths={columnWidths}
-                          onSelect={() => setSelectedRecordId(record.uid)}
-                          onDetailClick={() => setDetailedRecordId(record.uid)}
+                          onSelect={selectRecord}
+                          onDetailClick={showRecordDetail}
                           sourceRecords={sourceRecords}
+                          sourceRecordIndexes={sourceRecordIndexes}
                         />
                       ))}
                     </tbody>
@@ -686,27 +718,17 @@ export function Records({
                 <h3 style={{ margin: "0 0 12px 0", fontSize: "14px", color: "var(--ink)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span>📦 Solicitudes de Pedido (Matriz de Seguimiento)</span>
                   <span style={{ background: "#e2e8f0", color: "var(--muted)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", textTransform: "none", letterSpacing: "normal" }}>
-                    {((sourceRecords || []).filter((rec) => normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento")) && getRecordOt(rec) === getRecordOt(detailedRecord))).length} Relacionadas
+                    {detailedMatrixRecords.length} Relacionadas
                   </span>
                 </h3>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                  {((sourceRecords || []).filter((rec) => {
-                    const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
-                    if (!isMatrix) return false;
-                    const matrixOt = getRecordOt(rec);
-                    return matrixOt && normalizeText(matrixOt) === normalizeText(getRecordOt(detailedRecord));
-                  })).length === 0 ? (
+                  {detailedMatrixRecords.length === 0 ? (
                     <div style={{ padding: "24px", border: "1px dashed var(--line)", borderRadius: "10px", textAlign: "center", color: "var(--muted)" }}>
                       No se encontraron Solicitudes de Pedido (SP) vinculadas a esta OT en la Matriz de Seguimiento.
                     </div>
                   ) : (
-                    ((sourceRecords || []).filter((rec) => {
-                      const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
-                      if (!isMatrix) return false;
-                      const matrixOt = getRecordOt(rec);
-                      return matrixOt && normalizeText(matrixOt) === normalizeText(getRecordOt(detailedRecord));
-                    })).map((spRecord, spIndex) => {
+                    detailedMatrixRecords.map((spRecord, spIndex) => {
                       const spNumber = getMatrixField(spRecord, ["NUMERO DE LA SP (solo el numero sin letras)*", "NUMERO DE LA SP", "NÚMERO DE LA SP", "SP"]);
                       const solicitante = getMatrixField(spRecord, ["Nombre de quien solicita/autoriza la SP", "Nombre de quien solicita", "Solicitante"]).toUpperCase();
                       const proceso = getMatrixField(spRecord, ["Proceso que solicita la SP*", "Proceso que solicita la SP", "Proceso"]).toUpperCase();
@@ -810,17 +832,17 @@ export function Records({
                 <h3 style={{ margin: "0 0 12px 0", fontSize: "14px", color: "var(--ink)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "700", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span>Reporte de actividades (Facturacion)</span>
                   <span style={{ background: "#e2e8f0", color: "var(--muted)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", textTransform: "none", letterSpacing: "normal" }}>
-                    {getRelatedBillingRecords(sourceRecords, getRecordOt(detailedRecord)).length} actividades
+                    {detailedBillingRecords.length} actividades
                   </span>
                 </h3>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                  {getRelatedBillingRecords(sourceRecords, getRecordOt(detailedRecord)).length === 0 ? (
+                  {detailedBillingRecords.length === 0 ? (
                     <div style={{ padding: "24px", border: "1px dashed var(--line)", borderRadius: "10px", textAlign: "center", color: "var(--muted)" }}>
                       No se encontraron actividades de facturacion vinculadas a esta OT.
                     </div>
                   ) : (
-                    getRelatedBillingRecords(sourceRecords, getRecordOt(detailedRecord)).map((activityRecord, activityIndex) => {
+                    detailedBillingRecords.map((activityRecord, activityIndex) => {
                       const collaborator = getBillingField(activityRecord, ["colaborador", "COLABORADOR"]);
                       const billedProcess = getBillingField(activityRecord, ["proceso al que se factura la actividad", "PROCESO AL QUE SE FACTURA LA ACTIVIDAD", "proceso al que se facturo la actividad", "PROCESO AL QUE SE FACTURO LA ACTIVIDAD", "proceso"]);
                       const equipment = getBillingField(activityRecord, ["equipo intervenido", "EQUIPO INTERVENIDO", "equipo"]);
@@ -944,13 +966,99 @@ function normalizeUrlValue(value) {
   return "";
 }
 
-function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecord) {
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
+function buildSourceRecordIndexes(sourceRecords) {
+  const indexes = {
+    billingByOt: new Map(),
+    financialByOt: new Map(),
+    matrixByOt: new Map(),
+    purchaseOrdersByOt: new Map(),
+    workOrderByOt: new Map(),
+  };
+
+  (sourceRecords || []).forEach((record) => {
+    const otKey = normalizeOtKey(getRecordOt(record));
+    if (!otKey) return;
+
+    if (isMatrixSource(record)) {
+      addRecordToIndex(indexes.matrixByOt, otKey, record);
+      addPurchaseOrdersToIndex(indexes.purchaseOrdersByOt, otKey, record);
+    }
+
+    if (isWorkOrderSourceRecord(record) && !indexes.workOrderByOt.has(otKey)) {
+      indexes.workOrderByOt.set(otKey, record);
+    }
+
+    if (isBillingSourceRecord(record)) {
+      addRecordToIndex(indexes.billingByOt, otKey, record);
+    }
+
+    if (isFinancialSummarySourceRecord(record) && !indexes.financialByOt.has(otKey)) {
+      indexes.financialByOt.set(otKey, record);
+    }
+  });
+
+  indexes.purchaseOrdersByOt.forEach((orders, key) => {
+    indexes.purchaseOrdersByOt.set(key, [...orders].sort());
+  });
+
+  return indexes;
+}
+
+function addRecordToIndex(index, key, record) {
+  const items = index.get(key) || [];
+  items.push(record);
+  index.set(key, items);
+}
+
+function addPurchaseOrdersToIndex(index, key, record) {
+  const purchaseOrder = getCell(record, ["ORDENES DE COMPRA", "ORDEN DE COMPRA"]);
+  const text = String(purchaseOrder || "").trim();
+  if (!text) return;
+  const orders = index.get(key) || new Set();
+  orders.add(text);
+  index.set(key, orders);
+}
+
+function isMatrixSource(record) {
+  return normalizeText(record?.sourceName).includes(normalizeText("Matriz de Seguimiento"));
+}
+
+function isWorkOrderSourceRecord(record) {
+  const isWorkOrderSource = normalizeText(record?.sourceName).includes(normalizeText("Ordenes de Trabajo TYC"));
+  const isFormSheet = normalizeText(record?.sheetName).includes(normalizeText("respuestas de formulario 1"));
+  return isWorkOrderSource && isFormSheet;
+}
+
+function isBillingSourceRecord(record) {
+  const isActivitiesSource = normalizeText(record?.sourceName).includes(normalizeText("Reporte de Actividades Mantenimiento"));
+  const isBillingSheet = normalizeText(record?.sheetName) === normalizeText("FACTURACION") || hasBillingTableHeaders(record);
+  return isActivitiesSource && isBillingSheet;
+}
+
+function isFinancialSummarySourceRecord(record) {
+  return (
+    record?.sourceId === FINANCIAL_SUMMARY_SPREADSHEET_ID &&
+    normalizeText(record?.sheetName) === normalizeText(FINANCIAL_SUMMARY_SHEET)
+  );
+}
+
+function buildOtReportPayload(otRecord, sourceRecords, financialRecord = otRecord, sourceRecordIndexes = null) {
   const ot = getRecordOt(otRecord) || "NO ESPECIFICADO";
-  const workOrderRecord = findWorkOrderRecord(sourceRecords, ot) || otRecord;
+  const workOrderRecord = findWorkOrderRecord(sourceRecords, ot, sourceRecordIndexes) || otRecord;
   const resumenFinanciero = recordToObject(financialRecord);
   const datosGeneralesOT = recordToObject(otRecord);
   const datosOrdenTrabajoTYC = buildWorkOrderDetailObject(workOrderRecord);
-  const matrixRecords = getRelatedMatrixRecords(sourceRecords, ot);
+  const matrixRecords = getRelatedMatrixRecords(sourceRecords, ot, sourceRecordIndexes);
   const valorCompraAgregarTotal = sumMatrixPurchaseValue(matrixRecords);
   const solicitudesPedido = matrixRecords.map(buildSpReportItem);
   const ordenesCompra = [...new Set(solicitudesPedido.map((sp) => sp.ordenCompra).filter((value) => value && value !== "NO ESPECIFICADO"))].sort();
@@ -1072,10 +1180,13 @@ function compactValue(value, maxLength = 1200) {
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
 }
 
-function getRelatedMatrixRecords(sourceRecords, ot) {
+function getRelatedMatrixRecords(sourceRecords, ot, sourceRecordIndexes = null) {
   const targetOt = normalizeOtKey(ot);
+  if (sourceRecordIndexes?.matrixByOt?.has(targetOt)) {
+    return sourceRecordIndexes.matrixByOt.get(targetOt);
+  }
   return (sourceRecords || []).filter((rec) => {
-    const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
+    const isMatrix = isMatrixSource(rec);
     if (!isMatrix) return false;
     const matrixOt = getRecordOt(rec);
     return matrixOt && normalizeOtKey(matrixOt) === targetOt;
@@ -1093,23 +1204,24 @@ function sumMatrixPurchaseValue(matrixRecords) {
   ), 0));
 }
 
-function findWorkOrderRecord(sourceRecords, ot) {
+function findWorkOrderRecord(sourceRecords, ot, sourceRecordIndexes = null) {
   const targetOt = normalizeOtKey(ot);
   if (!targetOt) return null;
+  const indexedRecord = sourceRecordIndexes?.workOrderByOt?.get(targetOt);
+  if (indexedRecord) return indexedRecord;
   return (sourceRecords || []).find((rec) => {
-    const isWorkOrderSource = normalizeText(rec.sourceName).includes(normalizeText("Ordenes de Trabajo TYC"));
-    const isFormSheet = normalizeText(rec.sheetName).includes(normalizeText("respuestas de formulario 1"));
-    if (!isWorkOrderSource || !isFormSheet) return false;
+    if (!isWorkOrderSourceRecord(rec)) return false;
     return normalizeOtKey(getRecordOt(rec)) === targetOt;
   }) || null;
 }
 
-function getRelatedBillingRecords(sourceRecords, ot) {
+function getRelatedBillingRecords(sourceRecords, ot, sourceRecordIndexes = null) {
   const targetOt = normalizeOtKey(ot);
+  if (sourceRecordIndexes?.billingByOt?.has(targetOt)) {
+    return sourceRecordIndexes.billingByOt.get(targetOt);
+  }
   return (sourceRecords || []).filter((rec) => {
-    const isActivitiesSource = normalizeText(rec.sourceName).includes(normalizeText("Reporte de Actividades Mantenimiento"));
-    const isBillingSheet = normalizeText(rec.sheetName) === normalizeText("FACTURACION") || hasBillingTableHeaders(rec);
-    if (!isActivitiesSource || !isBillingSheet) return false;
+    if (!isBillingSourceRecord(rec)) return false;
     const billingOt = getBillingField(rec, ["OT"]);
     return billingOt && normalizeOtKey(billingOt) === targetOt;
   });
@@ -1136,7 +1248,7 @@ function getBillingField(record, columnKeys) {
   return text || "NO ESPECIFICADO";
 }
 
-function findFinancialReportTarget(record, sourceRecords) {
+function findFinancialReportTarget(record, sourceRecords, sourceRecordIndexes = null) {
   const currentOt = getRecordOt(record);
   const isCurrentFinancialRow =
     record?.sourceId === FINANCIAL_SUMMARY_SPREADSHEET_ID &&
@@ -1147,6 +1259,10 @@ function findFinancialReportTarget(record, sourceRecords) {
       spreadsheetId: FINANCIAL_SUMMARY_SPREADSHEET_ID,
       rowNumber: record.rowNumber,
     };
+  }
+  const indexedFinancialRecord = sourceRecordIndexes?.financialByOt?.get(normalizeOtKey(currentOt));
+  if (indexedFinancialRecord) {
+    return { record: indexedFinancialRecord, spreadsheetId: FINANCIAL_SUMMARY_SPREADSHEET_ID, rowNumber: indexedFinancialRecord.rowNumber };
   }
   const matchingFinancialRecord = (sourceRecords || []).find((item) => (
     item.sourceId === FINANCIAL_SUMMARY_SPREADSHEET_ID &&
@@ -1259,15 +1375,17 @@ function extractGid(url) {
   return String(url).match(/[?#&]gid=(\d+)/)?.[1] || "0";
 }
 
-function getCellValue(record, header, sourceRecords) {
+function getCellValue(record, header, sourceRecords, sourceRecordIndexes = null) {
   if (normalizeText(header) === normalizeText("ORDENES DE COMPRA")) {
     if (normalizeText(record.sourceName).includes(normalizeText("Matriz de Seguimiento"))) {
       return record.cells[header] ?? "";
     }
     const currentOt = getRecordOt(record);
     if (!currentOt) return record.cells[header] ?? "";
+    const indexedPurchaseOrders = sourceRecordIndexes?.purchaseOrdersByOt?.get(normalizeOtKey(currentOt));
+    if (indexedPurchaseOrders?.length) return indexedPurchaseOrders.join(", ");
     const matrixRecordsForOt = (sourceRecords || []).filter((rec) => {
-      const isMatrix = normalizeText(rec.sourceName).includes(normalizeText("Matriz de Seguimiento"));
+      const isMatrix = isMatrixSource(rec);
       if (!isMatrix) return false;
       const matrixOt = getRecordOt(rec);
       return matrixOt && normalizeText(matrixOt) === normalizeText(currentOt);
@@ -1336,14 +1454,14 @@ function countListElements(val) {
   return parts.length;
 }
 
-function calculateHeaderTooltip(header, records, sourceRecords) {
+function calculateHeaderTooltip(header, records, sourceRecords, sourceRecordIndexes = null) {
   const norm = normalizeText(header);
   const sourceDetail = buildHeaderSourceDetail(header, records);
   const isList = norm === "detalle cruce sp" || norm === "ordenes de compra" || norm === "detalle_cruce_sp" || norm === "ordenes_de_compra";
   if (isList) {
     let totalElements = 0;
     records.forEach((rec) => {
-      const val = getCellValue(rec, header, sourceRecords);
+      const val = getCellValue(rec, header, sourceRecords, sourceRecordIndexes);
       totalElements += countListElements(val);
     });
     return `Cantidad total de items: ${totalElements}${sourceDetail}`;
@@ -1354,7 +1472,7 @@ function calculateHeaderTooltip(header, records, sourceRecords) {
     let totalSum = 0;
     let count = 0;
     records.forEach((rec) => {
-      const val = getCellValue(rec, header, sourceRecords);
+      const val = getCellValue(rec, header, sourceRecords, sourceRecordIndexes);
       if (val !== undefined && val !== null && String(val).trim() !== "") {
         const num = parseFinancialMoney(val);
         if (!isNaN(num)) {
@@ -1369,7 +1487,7 @@ function calculateHeaderTooltip(header, records, sourceRecords) {
 
   let count = 0;
   records.forEach((rec) => {
-    const val = getCellValue(rec, header, sourceRecords);
+    const val = getCellValue(rec, header, sourceRecords, sourceRecordIndexes);
     if (val !== undefined && val !== null && String(val).trim() !== "") {
       count += 1;
     }
@@ -1377,9 +1495,9 @@ function calculateHeaderTooltip(header, records, sourceRecords) {
   return `Cantidad de items: ${count}${sourceDetail}`;
 }
 
-function buildHeaderTooltips(headers, records, sourceRecords) {
+function buildHeaderTooltips(headers, records, sourceRecords, sourceRecordIndexes = null) {
   return headers.reduce((tooltips, header) => {
-    tooltips[header] = calculateHeaderTooltip(header, records, sourceRecords);
+    tooltips[header] = calculateHeaderTooltip(header, records, sourceRecords, sourceRecordIndexes);
     return tooltips;
   }, {});
 }
@@ -1402,7 +1520,7 @@ function buildHeaderSourceDetail(header, records) {
   return `\nOrigen:\n${sourceLines.join("\n")}`;
 }
 
-function ResizableHeader({ header, onResizeStart, width, tooltip }) {
+const ResizableHeader = React.memo(function ResizableHeader({ header, onResizeStart, width, tooltip }) {
   return (
     <th 
       className={isOtHeader(header) ? "ot-column" : ""} 
@@ -1418,14 +1536,23 @@ function ResizableHeader({ header, onResizeStart, width, tooltip }) {
       />
     </th>
   );
-}
+});
 
-function RecordReadOnlyRow({ headers, isSelected, record, widths, onSelect, onDetailClick, sourceRecords }) {
+const RecordReadOnlyRow = React.memo(function RecordReadOnlyRow({
+  headers,
+  isSelected,
+  record,
+  widths,
+  onSelect,
+  onDetailClick,
+  sourceRecords,
+  sourceRecordIndexes,
+}) {
   return (
     <tr className={isSelected ? "selected-row" : ""}>
       <td className="action-column" style={{ width: "170px", minWidth: "170px", maxWidth: "170px", display: "flex", gap: "6px", alignItems: "center", justifyContent: "center" }}>
-        <button className="edit-record-button" type="button" onClick={onSelect} style={{ minHeight: "30px", height: "30px", padding: "0 10px", display: "flex", alignItems: "center", justifyContent: "center" }}>Editar</button>
-        <button className="detail-record-button" type="button" onClick={onDetailClick} style={{ minHeight: "30px", height: "30px", padding: "0 10px", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--accent)", color: "#fff", borderColor: "var(--accent)", fontWeight: "600" }}>Detalle</button>
+        <button className="edit-record-button" type="button" onClick={() => onSelect(record.uid)} style={{ minHeight: "30px", height: "30px", padding: "0 10px", display: "flex", alignItems: "center", justifyContent: "center" }}>Editar</button>
+        <button className="detail-record-button" type="button" onClick={() => onDetailClick(record.uid)} style={{ minHeight: "30px", height: "30px", padding: "0 10px", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--accent)", color: "#fff", borderColor: "var(--accent)", fontWeight: "600" }}>Detalle</button>
       </td>
       {headers.map((header, index) => (
         <td
@@ -1437,12 +1564,12 @@ function RecordReadOnlyRow({ headers, isSelected, record, widths, onSelect, onDe
             maxWidth: widths[header] || defaultColumnWidth(header),
           }}
         >
-          {getCellValue(record, header, sourceRecords)}
+          {getCellValue(record, header, sourceRecords, sourceRecordIndexes)}
         </td>
       ))}
     </tr>
   );
-}
+});
 
 function defaultColumnWidth(header) {
   if (isOtHeader(header)) return 96;

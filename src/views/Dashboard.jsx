@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { sum, cleanKey, formatMoney, normalizeText, parseMoney } from "../utils/helpers.js";
 import { trendPoints } from "../utils/analysis.js";
 import { EmptyState } from "../components/EmptyState.jsx";
@@ -9,19 +9,22 @@ const WORK_ORDERS_SOURCE_NAME = "Copia de ORDENES DE TRABAJO TYC";
 const WORK_ORDERS_SHEET_NAME = "copia de prueba respuestas de formulario 1";
 
 export function Dashboard({ documents, records, alerts, rankingMode, setRankingMode, runAnalysis }) {
-  const totalCost = calculateDashboardDetectedCost(records);
-  const totalHours = sum(records.map((record) => record.normalized.hoursNumber));
-  const equipments = new Set(records.map((record) => cleanKey(record.normalized.equipment)).filter(Boolean));
-  const workOrderRows = countWorkOrderRows(records);
+  const dashboardMetrics = useMemo(() => ({
+    totalCost: calculateDashboardDetectedCost(records),
+    totalHours: sum(records.map((record) => record.normalized.hoursNumber)),
+    equipmentCount: new Set(records.map((record) => cleanKey(record.normalized.equipment)).filter(Boolean)).size,
+    trend: trendPoints(records),
+    workOrderRows: countWorkOrderRows(records),
+  }), [records]);
 
   return (
     <section className="view active">
       <div className="kpi-grid">
         <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} />
-        <Kpi label="Filas OT" value={workOrderRows} hint="Columna OT en Copia de ORDENES DE TRABAJO TYC" />
-        <Kpi label="Costo detectado" value={formatMoney(totalCost)} hint="FACTURACION + Matriz de Seguimiento" />
-        <Kpi label="Horas" value={totalHours.toFixed(1)} hint="Horas reconocidas en reportes" />
-        <Kpi label="Equipos" value={equipments.size} hint="Activos detectados dinamicamente" />
+        <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en Copia de ORDENES DE TRABAJO TYC" />
+        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint="FACTURACION + Matriz de Seguimiento" />
+        <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint="Horas reconocidas en reportes" />
+        <Kpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" />
       </div>
       <div className="split">
         <section className="panel">
@@ -49,9 +52,9 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
       <section className="panel">
         <div className="panel-head">
           <h2>Tendencias operacionales</h2>
-          <span>{trendPoints(records).length ? "Registros por mes" : "Sin fechas suficientes"}</span>
+          <span>{dashboardMetrics.trend.length ? "Registros por mes" : "Sin fechas suficientes"}</span>
         </div>
-        <TrendChart records={records} />
+        <TrendChart points={dashboardMetrics.trend} />
       </section>
     </section>
   );
@@ -110,7 +113,7 @@ function Alerts({ alerts }) {
 }
 
 function Rankings({ records, mode }) {
-  const ranking = buildOperationalRanking(records, mode);
+  const ranking = useMemo(() => buildOperationalRanking(records, mode), [records, mode]);
 
   if (!ranking.length) return <EmptyState />;
   return (
@@ -391,8 +394,7 @@ function groupBy(items, keyFn) {
   }, {});
 }
 
-function TrendChart({ records }) {
-  const points = trendPoints(records);
+function TrendChart({ points }) {
   if (!points.length) {
     return (
       <div className="chart">

@@ -8,6 +8,40 @@ const WORK_ORDERS_SHEET_ID = "1862269386";
 const WORK_ORDERS_SOURCE_NAME = "ORDENES DE TRABAJO TYC";
 const WORK_ORDERS_SHEET_NAME = "copia de prueba respuestas de formulario 1";
 
+const KPI_SOURCE_DETAILS = {
+  records: "Fuente: todos los documentos sincronizados desde Fuentes.",
+  workOrders: "Fuente: ORDENES DE TRABAJO TYC / copia de prueba respuestas de formulario 1. Columna usada: OT.",
+  cost: "Fuente: Matriz de Seguimiento, REPORTE DE ACTIVIDADES MANTENIMIENTO / FACTURACION y HOJA RESUMEN FINANCIERO OTS / Hoja 2. Columnas: VALOR COMPRA, COSTO TOTAL, MANO OBRA.",
+  hours: "Fuente: registros clasificados con columnas de tiempo. Columnas: TIEMPO DE LA ACTIVIDAD, HORAS o HH.",
+  equipment: "Fuente: todos los documentos sincronizados. Columnas: EQUIPO, MAQUINA, MÁQUINA o ACTIVO.",
+};
+
+const RANKING_SOURCE_DETAILS = {
+  cost: {
+    label: "Ranking por costos",
+    description: "Cruza OTs y costos detectados. Usa MANO OBRA desde HOJA RESUMEN FINANCIERO OTS / Hoja 2 y compras desde Matriz de Seguimiento. Si no hay costos válidos, muestra una agrupación secundaria por equipo detectado.",
+    columns: "OT, MANO OBRA, VALOR COMPRA (AGREGAR), VALOR COMPRA, VALOR DE COMPRA, VALOR DE LA COMPRA, ORDENES DE COMPRA",
+  },
+  equipment: {
+    label: "Ranking por equipos",
+    description: "Agrupa registros por equipo detectado en las hojas sincronizadas y suma los costos/horas relacionados por OT cuando existen.",
+    columns: "EQUIPO, MAQUINA, MÁQUINA, ACTIVO, OT",
+  },
+  people: {
+    label: "Ranking por técnicos",
+    description: "Agrupa actividades por colaborador o técnico y acumula horas cuando la hoja trae columnas de tiempo.",
+    columns: "COLABORADOR, TECNICO, TÉCNICO, TIEMPO DE LA ACTIVIDAD, HORAS, HH",
+  },
+  providers: {
+    label: "Ranking por proveedores",
+    description: "Usa solamente registros de Matriz de Seguimiento para agrupar compras por proveedor.",
+    columns: "PROVEEDOR, EMPRESA, TERCERO, VALOR COMPRA, ORDENES DE COMPRA",
+  },
+};
+
+const ALERTS_SOURCE_DETAIL = "Fuente: todos los registros sincronizados. Revisa costos atípicos, registros sin estado y registros operacionales sin fecha reconocida.";
+const TREND_SOURCE_DETAIL = "Fuente: registros con una fecha reconocida en cualquier documento. Columnas detectadas por nombre: FECHA, DIA, CREADO, EMISION, CIERRE o ENTREGA.";
+
 export function Dashboard({ documents, records, alerts, rankingMode, setRankingMode, runAnalysis }) {
   const dashboardMetrics = useMemo(() => ({
     totalCost: calculateDashboardDetectedCost(records),
@@ -20,11 +54,11 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
   return (
     <section className="view active">
       <div className="kpi-grid">
-        <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} />
-        <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en ORDENES DE TRABAJO TYC" />
-        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint="FACTURACION + Matriz de Seguimiento" />
-        <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint="Horas reconocidas en reportes" />
-        <Kpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" />
+        <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} source={KPI_SOURCE_DETAILS.records} />
+        <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en ORDENES DE TRABAJO TYC" source={KPI_SOURCE_DETAILS.workOrders} />
+        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint="FACTURACION + Matriz de Seguimiento" source={KPI_SOURCE_DETAILS.cost} />
+        <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint="Horas reconocidas en reportes" source={KPI_SOURCE_DETAILS.hours} />
+        <Kpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" source={KPI_SOURCE_DETAILS.equipment} />
       </div>
       <div className="split">
         <section className="panel">
@@ -34,6 +68,7 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
               Analizar
             </button>
           </div>
+          <SourceNote text={ALERTS_SOURCE_DETAIL} />
           <Alerts alerts={alerts} />
         </section>
         <section className="panel">
@@ -54,6 +89,7 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
           <h2>Tendencias operacionales</h2>
           <span>{dashboardMetrics.trend.length ? "Registros por mes" : "Sin fechas suficientes"}</span>
         </div>
+        <SourceNote text={TREND_SOURCE_DETAIL} />
         <TrendChart points={dashboardMetrics.trend} />
       </section>
     </section>
@@ -88,14 +124,19 @@ function calculateDashboardDetectedCost(records) {
   }));
 }
 
-function Kpi({ label, value, hint }) {
+function Kpi({ label, value, hint, source }) {
   return (
     <article className="kpi">
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{hint}</small>
+      <small className="source-detail">{source}</small>
     </article>
   );
+}
+
+function SourceNote({ text }) {
+  return <p className="source-note">{text}</p>;
 }
 
 function Alerts({ alerts }) {
@@ -114,18 +155,40 @@ function Alerts({ alerts }) {
 
 function Rankings({ records, mode }) {
   const ranking = useMemo(() => buildOperationalRanking(records, mode), [records, mode]);
+  const sourceDetail = RANKING_SOURCE_DETAILS[mode] || RANKING_SOURCE_DETAILS.cost;
 
-  if (!ranking.length) return <EmptyState />;
+  if (!ranking.length) {
+    return (
+      <>
+        <RankingSourceCard sourceDetail={sourceDetail} />
+        <EmptyState />
+      </>
+    );
+  }
   return (
-    <div className="list dashboard-scroll-list">
-      {ranking.map((item) => (
-        <article className="item" key={`ranking-${mode}-${item.key}`}>
-          <strong>{item.key}</strong>
-          <small>
-            {item.detail || `${item.count} registros · ${formatMoney(item.cost)} · ${item.hours.toFixed(1)} horas`}
-          </small>
-        </article>
-      ))}
+    <>
+      <RankingSourceCard sourceDetail={sourceDetail} />
+      <div className="list dashboard-scroll-list">
+        {ranking.map((item) => (
+          <article className="item" key={`ranking-${mode}-${item.key}`}>
+            <strong>{item.key}</strong>
+            <small>
+              {item.detail || `${item.count} registros · ${formatMoney(item.cost)} · ${item.hours.toFixed(1)} horas`}
+            </small>
+            <small className="source-detail">{item.sourceDetail}</small>
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function RankingSourceCard({ sourceDetail }) {
+  return (
+    <div className="dashboard-source-card">
+      <strong>{sourceDetail.label}</strong>
+      <span>{sourceDetail.description}</span>
+      <small>Columnas buscadas: {sourceDetail.columns}</small>
     </div>
   );
 }
@@ -191,6 +254,7 @@ function rankOtsByCost(otMetrics, records) {
       cost: metric.cost,
       hours: metric.hours,
       detail: `${formatMoney(metric.cost)} total · compras ${formatMoney(Math.max(metric.purchaseValue, metric.financialPurchaseValue))} · mano de obra ${formatMoney(metric.laborValue)} · ${metric.purchaseOrders.size} OC`,
+      sourceDetail: "Origen: HOJA RESUMEN FINANCIERO OTS / Hoja 2 (MANO OBRA, VALOR DE LA COMPRA DE LA SP) + Matriz de Seguimiento (VALOR COMPRA, ORDENES DE COMPRA).",
     }))
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 10);
@@ -214,6 +278,7 @@ function rankEquipmentByCost(otMetrics, records) {
     .map((item) => ({
       ...item,
       detail: `${item.ots.size} OT · ${formatMoney(item.cost)} · ${item.hours.toFixed(1)} horas · ${item.count} registros`,
+      sourceDetail: "Origen: registros con columnas de equipo (EQUIPO, MAQUINA, MÁQUINA o ACTIVO), cruzados por OT cuando existe.",
     }))
     .sort((a, b) => (b.cost || b.count) - (a.cost || a.count))
     .slice(0, 10);
@@ -238,6 +303,7 @@ function rankPeopleByActivity(records) {
     .map((item) => ({
       ...item,
       detail: `${item.count} actividades/registros · ${item.hours.toFixed(1)} horas · ${item.ots.size} OT`,
+      sourceDetail: "Origen: REPORTE DE ACTIVIDADES MANTENIMIENTO o registros con COLABORADOR/TECNICO y columnas de horas.",
     }))
     .sort((a, b) => (b.hours || b.count) - (a.hours || a.count))
     .slice(0, 10);
@@ -262,6 +328,7 @@ function rankProvidersByPurchases(records) {
     .map((item) => ({
       ...item,
       detail: `${formatMoney(item.cost)} en compras · ${item.ots.size} OT · ${item.purchaseOrders.size} OC · ${item.count} registros`,
+      sourceDetail: "Origen: Matriz de Seguimiento. Columnas: PROVEEDOR/EMPRESA/TERCERO, VALOR COMPRA y ORDENES DE COMPRA.",
     }))
     .sort((a, b) => (b.cost || b.count) - (a.cost || a.count))
     .slice(0, 10);
@@ -278,9 +345,19 @@ function buildGenericRanking(records, mode) {
       count: items.length,
       cost: sum(items.map((item) => item.normalized.costNumber)),
       hours: sum(items.map((item) => item.normalized.hoursNumber)),
+      sourceDetail: buildGenericSourceDetail(items, mode),
     }))
     .sort((a, b) => (mode === "cost" ? b.cost - a.cost : b.count - a.count))
     .slice(0, 10);
+}
+
+function buildGenericSourceDetail(items, mode) {
+  const sourceLines = [...new Set(items.map((item) => `${item.sourceName} / ${item.sheetName}`))]
+    .filter(Boolean)
+    .slice(0, 3);
+  const field = { cost: "equipo detectado", equipment: "equipo detectado", people: "tecnico detectado", providers: "proveedor detectado" }[mode] || "campo detectado";
+  const sourceText = sourceLines.length ? sourceLines.join(" | ") : "origen no identificado";
+  return `Origen: agrupacion secundaria por ${field}. Hojas: ${sourceText}.`;
 }
 
 function getOrCreateMetric(metrics, key, ot) {

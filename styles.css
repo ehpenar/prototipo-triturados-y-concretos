@@ -290,6 +290,13 @@ textarea {
 
 .kpi small { color: var(--muted); }
 
+.kpi .source-detail {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .split {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -322,6 +329,37 @@ textarea {
   max-height: 360px;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+.source-note,
+.dashboard-source-card {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.source-note {
+  margin: -4px 0 12px;
+}
+
+.dashboard-source-card {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d6e6e4;
+  border-radius: 7px;
+  background: #f4fbfa;
+}
+
+.dashboard-source-card strong {
+  color: var(--ink);
+}
+
+.item .source-detail {
+  display: block;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .item {

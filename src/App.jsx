@@ -44,13 +44,41 @@ import { Settings } from "./views/Settings.jsx";
 const LINKED_EMAILS_SHEET = "Correos vinculados";
 const LINKED_EMAILS_HEADERS = ["CORREOS EMISOR", "CORREOS RECEPTORES"];
 const CHANGES_SHEET = "Cambios";
-const CHANGES_HEADERS = ["documento", "Hoja", "donde se hizo el cambio", "cambio anterio", "cambio actual", "enviado"];
+const CHANGES_HEADERS = [
+  "documento",
+  "Hoja",
+  "donde se hizo el cambio",
+  "cambio anterio",
+  "cambio actual",
+  "descripcion del fallo",
+  "comentario",
+  "enviado",
+];
 const CHANGE_DIGEST_THRESHOLD = 5;
 const MAX_TRACKED_CHANGE_VALUE_LENGTH = 80;
 const MAX_TRACKED_FIELDS_PER_RECORD = 12;
 const MAX_PERSISTED_OT_CHANGE_STATE_CHARS = 600000;
 const GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state_v2";
 const LEGACY_GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state";
+const WORK_ORDER_SOURCE_KEYWORD = "ORDENES DE TRABAJO TYC";
+const WORK_ORDER_FORM_SHEET_KEYWORD = "respuestas de formulario 1";
+const WORK_ORDER_DESCRIPTION_ALIASES = [
+  "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICITUD",
+  "DESCRIPCION GENERAL DEL FALLO O DE LA SOLICITUD",
+  "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICTUD",
+  "DESCRIPCION GENERAL DEL FALLO O DE LA SOLICTUD",
+  "DESCRIPCIÓN GENERAL DEL FALLO",
+  "DESCRIPCION GENERAL DEL FALLO",
+  "DESCRIPCIÓN DE LA SOLICITUD",
+  "DESCRIPCION DE LA SOLICITUD",
+];
+const WORK_ORDER_COMMENT_ALIASES = [
+  "COMENTARIOS",
+  "COMENTARIO",
+  "OBSERVACIONES",
+  "OBSERVACIÓN",
+  "OBSERVACION",
+];
 const TRACKED_CHANGE_FIELD_KEYWORDS = [
   "ot",
   "sp",
@@ -249,10 +277,11 @@ function App() {
 
     globalStatusSendInProgressRef.current = true;
     try {
-      const changeRows = changes.map(mapStatusChangeToSheetRow);
+      const enrichedChanges = enrichChangesWithWorkOrderContext(changes, records);
+      const changeRows = enrichedChanges.map(mapStatusChangeToSheetRow);
       const pending = await prepareDetectedChanges(changeRows);
       if (!pending.spreadsheetId || !pending.pendingRows.length) return;
-      const pendingChanges = pending.pendingIndexes.map((index) => changes[index]);
+      const pendingChanges = pending.pendingIndexes.map((index) => enrichedChanges[index]);
       const recipients = getConfiguredEmailRecipients(notificationConfig);
       let sentIndexes = new Set();
       if (recipients) {
@@ -293,10 +322,11 @@ function App() {
 
     globalOtChangeSendInProgressRef.current = true;
     try {
-      const changeRows = changes.map(mapOtFieldChangeToSheetRow);
+      const enrichedChanges = enrichChangesWithWorkOrderContext(changes, records);
+      const changeRows = enrichedChanges.map(mapOtFieldChangeToSheetRow);
       const pending = await prepareDetectedChanges(changeRows);
       if (!pending.spreadsheetId || !pending.pendingRows.length) return;
-      const pendingChanges = pending.pendingIndexes.map((index) => changes[index]);
+      const pendingChanges = pending.pendingIndexes.map((index) => enrichedChanges[index]);
       const recipients = getConfiguredEmailRecipients(notificationConfig);
       let sentIndexes = new Set();
       if (recipients) {
@@ -1189,8 +1219,10 @@ function buildAutomaticStatusChangeMessage(change) {
     `OT: ${change.ot || "NO ESPECIFICADO"}`,
     `Estado anterior: ${change.previousStatus || "NO ESPECIFICADO"}`,
     `Estado nuevo: ${change.status || "NO ESPECIFICADO"}`,
+    change.workOrderDescription ? `Descripcion del fallo: ${change.workOrderDescription}` : "",
+    change.workOrderComment ? `Comentario: ${change.workOrderComment}` : "",
     `Registro: ${change.recordLabel || "NO ESPECIFICADO"}`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function buildAutomaticOtFieldChangeMessage(change) {
@@ -1206,6 +1238,8 @@ function buildAutomaticOtFieldChangeMessage(change) {
     `Valor anterior: ${formatChangeValue(change.previousValue)}`,
     `Valor nuevo: ${formatChangeValue(change.newValue)}`,
     "",
+    change.workOrderDescription ? `Descripcion del fallo: ${change.workOrderDescription}` : "",
+    change.workOrderComment ? `Comentario: ${change.workOrderComment}` : "",
     `Fecha del cambio: ${change.changedAt || "NO ESPECIFICADO"}`,
     `Usuario responsable: ${change.userResponsible || "NO DISPONIBLE"}`,
     change.recordLabel ? `Registro: ${change.recordLabel}` : "",
@@ -1233,6 +1267,8 @@ function mapStatusChangeToSheetRow(change) {
     "donde se hizo el cambio": buildChangeLocation(change, "ESTADO"),
     "cambio anterio": formatChangeValue(change.previousStatus),
     "cambio actual": formatChangeValue(change.status),
+    "descripcion del fallo": formatChangeValue(change.workOrderDescription),
+    comentario: formatChangeValue(change.workOrderComment),
   };
 }
 
@@ -1243,7 +1279,37 @@ function mapOtFieldChangeToSheetRow(change) {
     "donde se hizo el cambio": buildChangeLocation(change, change.field),
     "cambio anterio": formatChangeValue(change.previousValue),
     "cambio actual": formatChangeValue(change.newValue),
+    "descripcion del fallo": formatChangeValue(change.workOrderDescription),
+    comentario: formatChangeValue(change.workOrderComment),
   };
+}
+
+function enrichChangesWithWorkOrderContext(changes, records) {
+  const contextByOt = buildWorkOrderContextByOt(records);
+  return changes.map((change) => {
+    const otKey = normalizeOtForReminder(change.ot);
+    const context = otKey ? contextByOt.get(otKey) : null;
+    return context ? { ...change, ...context } : change;
+  });
+}
+
+function buildWorkOrderContextByOt(records) {
+  const contextByOt = new Map();
+  (records || []).forEach((record) => {
+    if (!isWorkOrderFormRecord(record)) return;
+    const otKey = normalizeOtForReminder(getRecordOtFromRecord(record));
+    if (!otKey || contextByOt.has(otKey)) return;
+    contextByOt.set(otKey, {
+      workOrderDescription: getRecordCellByAliases(record, WORK_ORDER_DESCRIPTION_ALIASES),
+      workOrderComment: getRecordCellByAliases(record, WORK_ORDER_COMMENT_ALIASES),
+    });
+  });
+  return contextByOt;
+}
+
+function isWorkOrderFormRecord(record) {
+  return normalizeText(record?.sourceName).includes(normalizeText(WORK_ORDER_SOURCE_KEYWORD)) &&
+    normalizeText(record?.sheetName).includes(normalizeText(WORK_ORDER_FORM_SHEET_KEYWORD));
 }
 
 function markRowsAsSent(rows, sentIndexes) {

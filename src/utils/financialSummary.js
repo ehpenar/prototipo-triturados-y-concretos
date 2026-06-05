@@ -76,7 +76,7 @@ function buildSummaryRow(order, context) {
   const spReceptionDate = parseFlexibleDate(firstValue(matrixRows, ["Fecha de Recepción de la SP  Nota: si no tiene fecha coloque la de la SP *", "Fecha de Recepcion de la SP", "Fecha de Recepción de la SP"]));
   const approvalDate = parseFlexibleDate(getCell(matrixRecord, ["FECHA APROBACION", "FECHA APROBACIÓN"]));
   const labor = calculateLabor(otNumber, context.activitiesByOt, context.personalRates);
-  const purchaseValue = resolvePurchaseValue(otNumber, spResult.sp, matrixRecord, context.financialIndexes);
+  const purchaseValue = resolvePurchaseValue(otNumber, spResult.sp, matrixRows, context.financialIndexes);
   const executionTime = getExecutionTime(order, orderDate, deliveryDate);
   const collaborators = formatCollaborators(context.collaboratorsByOt.get(normalizeKey(otNumber)) || []);
 
@@ -163,12 +163,29 @@ function calculateLabor(otNumber, activitiesByOt, personalRates) {
   };
 }
 
-function resolvePurchaseValue(otNumber, sp, matrixRecord, indexes) {
+function resolvePurchaseValue(otNumber, sp, matrixRows, indexes) {
+  const matrixPurchaseValue = sumMatrixPurchaseValues(matrixRows);
+  if (matrixPurchaseValue) {
+    return {
+      value: matrixPurchaseValue,
+      method: "directo_matriz_valor_compra",
+      detail: `Matriz de Seguimiento / respuestas formulario 1; ${matrixRows.length} filas por OT/SP`,
+    };
+  }
   const byOt = indexes.byOt.get(normalizeKey(otNumber));
   if (byOt?.length) return { value: sumFinancialCosts(byOt), method: "directo_financiero_ot", detail: `OT=${otNumber}; ${byOt.length} filas en Hoja 1` };
   const bySp = indexes.bySp.get(normalizeKey(sp));
   if (bySp?.length) return { value: sumFinancialCosts(bySp), method: "directo_financiero_sp", detail: `SP=${sp}; ${bySp.length} filas en Hoja 1` };
   return { value: "", method: "sin_valor_compra", detail: "No hay fila en Hoja 1 por OT ni SP" };
+}
+
+function sumMatrixPurchaseValues(records) {
+  return roundMoney((records || []).reduce((total, record) => total + parseFinancialMoney(getCell(record, [
+    "VALOR COMPRA (AGREGAR)",
+    "VALOR COMPRA",
+    "VALOR DE COMPRA",
+    "VALOR DE LA COMPRA",
+  ])), 0));
 }
 
 function buildFinancialIndexes(records) {

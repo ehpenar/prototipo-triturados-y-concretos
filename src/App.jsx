@@ -551,13 +551,18 @@ function App() {
       return;
     }
     const nextRecords = loadedDocuments.flatMap((document) => document.records);
+    await yieldToBrowser();
     const nextRelations = detectRelations(nextRecords);
+    await yieldToBrowser();
     await syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt);
+    await yieldToBrowser();
     await syncFinancialSummary(loadedDocuments, allowAuthPrompt);
+    await yieldToBrowser();
+    const nextAlerts = detectAnomalies(nextRecords, nextRelations);
     setDocuments(loadedDocuments);
     setRecords(nextRecords);
     setRelations(nextRelations);
-    setAlerts(detectAnomalies(nextRecords, nextRelations));
+    setAlerts(nextAlerts);
     setSyncStatus(`${successCount ? "Actualizado" : "Datos conservados"} ${new Date().toLocaleTimeString("es-CO")}`);
     addLog(`Rendimiento: sincronizacion completada en ${formatDuration(startedAt)}.`);
     syncInProgressRef.current = false;
@@ -874,6 +879,16 @@ function nowMs() {
 function formatDuration(startedAt) {
   const elapsed = Math.max(0, Math.round(nowMs() - startedAt));
   return elapsed >= 1000 ? `${(elapsed / 1000).toFixed(1)}s` : `${elapsed}ms`;
+}
+
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
 }
 
 function getConfiguredEmailRecipients(config) {

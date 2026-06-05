@@ -19,6 +19,7 @@ const TARGET_SPREADSHEET_ID = "1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns";
 const TARGET_SHEET_ID = "1862269386";
 const FINANCIAL_SUMMARY_SPREADSHEET_ID = "1Aaaj5rxLEl6KakxsXGV9BlIDkCyrqSZad6eayyAX4TQ";
 const RECORD_STATUS_OPTIONS = ["TERMINADO", "REVISION", "SIN REVISAR", "SIN INICIAR"];
+const HEADER_LOOKUP_CACHE = new WeakMap();
 
 export function Records({
   addLog,
@@ -1299,17 +1300,36 @@ function getMatrixField(matrixRecord, columnKeys) {
 
 function getCell(record, names, containsNames = []) {
   if (!record) return "";
-  const normHeader = (val) => normalizeText(val).replace(/\s+/g, "");
+  const lookup = getHeaderLookup(record);
   for (const name of names) {
-    const header = record.headers?.find((item) => normHeader(item) === normHeader(name));
+    const header = lookup.byNormalizedHeader.get(normalizeHeaderLookupKey(name));
     if (header && record.cells?.[header] !== undefined) return record.cells[header];
   }
   for (const name of containsNames) {
-    const target = normHeader(name);
-    const header = record.headers?.find((item) => normHeader(item).includes(target));
+    const target = normalizeHeaderLookupKey(name);
+    const header = lookup.normalizedHeaders.find((item) => item.normalized.includes(target))?.header;
     if (header && record.cells?.[header] !== undefined) return record.cells[header];
   }
   return "";
+}
+
+function getHeaderLookup(record) {
+  const headers = record?.headers || [];
+  const cached = HEADER_LOOKUP_CACHE.get(headers);
+  if (cached) return cached;
+  const byNormalizedHeader = new Map();
+  const normalizedHeaders = headers.map((header) => {
+    const normalized = normalizeHeaderLookupKey(header);
+    if (!byNormalizedHeader.has(normalized)) byNormalizedHeader.set(normalized, header);
+    return { header, normalized };
+  });
+  const lookup = { byNormalizedHeader, normalizedHeaders };
+  HEADER_LOOKUP_CACHE.set(headers, lookup);
+  return lookup;
+}
+
+function normalizeHeaderLookupKey(value) {
+  return normalizeText(value).replace(/\s+/g, "");
 }
 
 function isTargetSheet(sheet) {
@@ -1326,13 +1346,11 @@ function isTargetRecord(record) {
 }
 
 function getRecordOt(record) {
-  const otHeader = record.headers?.find((header) => normalizeText(header) === "ot");
-  return String(record.cells?.[otHeader] || record.normalized?.work_order || "").trim();
+  return String(getCell(record, ["OT"]) || record.normalized?.work_order || "").trim();
 }
 
 function getRecordStatusForFilter(record) {
-  const statusHeader = record.headers?.find((header) => normalizeText(header) === "estado");
-  return String(record.cells?.[statusHeader] || record.normalized?.status || "").trim();
+  return String(getCell(record, ["ESTADO"]) || record.normalized?.status || "").trim();
 }
 
 function findRecordByOt(records, ot) {

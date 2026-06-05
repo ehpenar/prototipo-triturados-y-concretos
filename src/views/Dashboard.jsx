@@ -194,10 +194,14 @@ function RankingSourceCard({ sourceDetail }) {
 }
 
 function buildOperationalRanking(records, mode) {
-  const otMetrics = buildOtMetrics(records);
+  let otMetrics = null;
+  const getOtMetrics = () => {
+    if (!otMetrics) otMetrics = buildOtMetrics(records);
+    return otMetrics;
+  };
   const rankingBuilders = {
-    cost: () => rankOtsByCost(otMetrics, records),
-    equipment: () => rankEquipmentByCost(otMetrics, records),
+    cost: () => rankOtsByCost(getOtMetrics(), records),
+    equipment: () => rankEquipmentByCost(getOtMetrics(), records),
     people: () => rankPeopleByActivity(records),
     providers: () => rankProvidersByPurchases(records),
   };

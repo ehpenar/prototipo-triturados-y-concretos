@@ -55,7 +55,6 @@ const CHANGES_HEADERS = [
   "enviado",
 ];
 const CHANGE_DIGEST_THRESHOLD = 5;
-const MAX_EMAIL_FIELD_VALUE_LENGTH = 500;
 const MAX_TRACKED_CHANGE_VALUE_LENGTH = 80;
 const MAX_TRACKED_FIELDS_PER_RECORD = 12;
 const MAX_PERSISTED_OT_CHANGE_STATE_CHARS = 600000;
@@ -975,7 +974,6 @@ function buildStatusSnapshot(records) {
       sheetName: record.sheetName || "",
       rowNumber: record.rowNumber || "",
       recordLabel: `${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}`,
-      allColumns: buildEmailRecordColumns(record),
     };
     return snapshot;
   }, {});
@@ -994,7 +992,6 @@ function buildOtFieldSnapshot(records) {
       recordLabel: `${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}`,
       userResponsible: getRecordResponsibleUser(record),
       fields: buildComparableRecordFields(record),
-      allColumns: buildEmailRecordColumns(record),
     };
     return snapshot;
   }, {});
@@ -1033,7 +1030,6 @@ function collectOtFieldChanges(previousSnapshot, currentSnapshot) {
         changedAt: new Date().toLocaleString("es-CO"),
         userResponsible: current.userResponsible || "NO DISPONIBLE",
         recordLabel: current.recordLabel,
-        allColumns: current.allColumns || [],
       });
     });
   });
@@ -1175,21 +1171,6 @@ function getRecordCellByAliases(record, aliases) {
   return "";
 }
 
-function buildEmailRecordColumns(record) {
-  return (record?.headers || []).map((header) => ({
-    header,
-    value: compactEmailFieldValue(record.cells?.[header]),
-  }));
-}
-
-function compactEmailFieldValue(value) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
-  if (!text) return "VACIO";
-  return text.length > MAX_EMAIL_FIELD_VALUE_LENGTH
-    ? `${text.slice(0, MAX_EMAIL_FIELD_VALUE_LENGTH - 3)}...`
-    : text;
-}
-
 function normalizeComparableValue(value) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   return text.length > MAX_TRACKED_CHANGE_VALUE_LENGTH
@@ -1241,8 +1222,6 @@ function buildAutomaticStatusChangeMessage(change) {
     change.workOrderDescription ? `Descripcion del fallo: ${change.workOrderDescription}` : "",
     change.workOrderComment ? `Comentario: ${change.workOrderComment}` : "",
     `Registro: ${change.recordLabel || "NO ESPECIFICADO"}`,
-    "",
-    buildAllColumnsMessage(change.allColumns),
   ].filter(Boolean).join("\n");
 }
 
@@ -1264,8 +1243,6 @@ function buildAutomaticOtFieldChangeMessage(change) {
     `Fecha del cambio: ${change.changedAt || "NO ESPECIFICADO"}`,
     `Usuario responsable: ${change.userResponsible || "NO DISPONIBLE"}`,
     change.recordLabel ? `Registro: ${change.recordLabel}` : "",
-    "",
-    buildAllColumnsMessage(change.allColumns),
   ].filter(Boolean).join("\n");
 }
 
@@ -1280,14 +1257,6 @@ function buildChangeDigestMessage(title, changes, getMessage) {
       getMessage(change),
       "",
     ]),
-  ].join("\n");
-}
-
-function buildAllColumnsMessage(columns) {
-  if (!columns?.length) return "";
-  return [
-    "Todas las columnas del registro:",
-    ...columns.map((column) => `- ${column.header}: ${column.value}`),
   ].join("\n");
 }
 

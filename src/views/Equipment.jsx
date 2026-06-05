@@ -4,15 +4,15 @@ import { relationKey } from "../utils/analysis.js";
 import { EmptyState } from "../components/EmptyState.jsx";
 import { Chips } from "../components/Chips.jsx";
 
-export function Equipment({ relations, equipmentSearch, setEquipmentSearch }) {
+export function Equipment({ relations, equipmentSearch, debouncedEquipmentSearch = equipmentSearch, setEquipmentSearch }) {
   const equipmentRelations = useMemo(() => {
-    const query = normalizeText(equipmentSearch);
+    const query = normalizeText(debouncedEquipmentSearch);
     return relations
       .filter((relation) => relation.kind === "equipment")
       .filter((relation) => !query || normalizeText(relation.key).includes(query))
       .sort((a, b) => b.count - a.count)
       .slice(0, 30);
-  }, [relations, equipmentSearch]);
+  }, [relations, debouncedEquipmentSearch]);
 
   return (
     <section className="view active">

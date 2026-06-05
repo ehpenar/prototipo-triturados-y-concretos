@@ -12,6 +12,7 @@ import { generateOtReport } from "../utils/ai.js";
 import { FINANCIAL_SUMMARY_SHEET } from "../utils/financialSummary.js";
 import { FilterSelect } from "../components/FilterSelect.jsx";
 import { EmptyState } from "../components/EmptyState.jsx";
+import { useDebouncedValue } from "../hooks/useDebouncedValue.js";
 
 const TARGET_RECORDS_SHEET = "copia de prueba respuestas de formulario 1";
 const TARGET_SPREADSHEET_ID = "1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns";
@@ -48,21 +49,25 @@ export function Records({
   const [reportEmailSender, setReportEmailSender] = useState("");
   const [reportEmailRecipients, setReportEmailRecipients] = useState([]);
   const [otReports, setOtReports] = useState({});
+  const debouncedOtFilter = useDebouncedValue(otFilter);
   const targetRecords = useMemo(() => records, [records]);
   const sourceRecordIndexes = useMemo(() => buildSourceRecordIndexes(sourceRecords), [sourceRecords]);
+  const documentFilterValues = useMemo(() => [...new Set(sourceRecords.map((record) => record.sourceName))], [sourceRecords]);
+  const typeFilterValues = useMemo(() => [...new Set(sourceRecords.map((record) => record.type))], [sourceRecords]);
+  const sheetCount = useMemo(() => documents.reduce((total, document) => total + document.sheets.length, 0), [documents]);
   const otOptions = useMemo(() => {
     const values = sourceRecords.filter((record) => isTargetRecord(record)).map(getRecordOt).filter(Boolean);
     return [...new Set(values)].sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
   }, [sourceRecords]);
   const tableRecords = useMemo(() => {
-    const query = normalizeText(otFilter);
+    const query = normalizeText(debouncedOtFilter);
     const statusQuery = normalizeText(estadoFilter);
     return targetRecords.filter((record) => {
       const matchesOt = !query || normalizeText(getRecordOt(record)).includes(query);
       const matchesStatus = !statusQuery || normalizeText(getRecordStatusForFilter(record)) === statusQuery;
       return matchesOt && matchesStatus;
     });
-  }, [targetRecords, otFilter, estadoFilter]);
+  }, [targetRecords, debouncedOtFilter, estadoFilter]);
   const headers = useMemo(() => tableRecords[0]?.headers || [], [tableRecords]);
   const totalPages = Math.max(1, Math.ceil(tableRecords.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -257,7 +262,7 @@ export function Records({
           <span>registros de {TARGET_RECORDS_SHEET}</span>
           <strong>{headers.length}</strong>
           <span>columnas detectadas</span>
-          <strong>{documents.reduce((total, document) => total + document.sheets.length, 0)}</strong>
+          <strong>{sheetCount}</strong>
           <span>hojas leidas</span>
           {embeddedSheet?.editUrl && (
             <a className="button-link" href={embeddedSheet.editUrl} rel="noreferrer" target="_blank">
@@ -272,7 +277,7 @@ export function Records({
           <FilterSelect
             label="Todos los documentos"
             value={filters.document}
-            values={[...new Set(sourceRecords.map((record) => record.sourceName))]}
+            values={documentFilterValues}
             onChange={(document) => setFilters((current) => ({ ...current, document }))}
           />
           <FilterSelect
@@ -285,7 +290,7 @@ export function Records({
           <FilterSelect
             label="Todos los tipos"
             value={filters.type}
-            values={[...new Set(sourceRecords.map((record) => record.type))]}
+            values={typeFilterValues}
             onChange={(type) => setFilters((current) => ({ ...current, type }))}
           />
           <label className="ot-filter">

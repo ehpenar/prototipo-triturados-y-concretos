@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { CONFIG, VIEWS, viewLabels } from "./constants/config.js";
 import {
   loadSources,
@@ -30,16 +30,18 @@ import {
 import { answerLocally, askOpenAI } from "./utils/ai.js";
 
 // Import Modular Views
-import { Dashboard } from "./views/Dashboard.jsx";
-import { Records } from "./views/Records.jsx";
-import { Relations } from "./views/Relations.jsx";
-import { Equipment } from "./views/Equipment.jsx";
-import { Automation } from "./views/Automation.jsx";
-import { Reminders } from "./views/Reminders.jsx";
-import { Reports } from "./views/Reports.jsx";
-import { Integrations } from "./views/Integrations.jsx";
-import { Assistant } from "./views/Assistant.jsx";
-import { Settings } from "./views/Settings.jsx";
+import { useDebouncedValue } from "./hooks/useDebouncedValue.js";
+
+const Dashboard = lazy(() => import("./views/Dashboard.jsx").then((module) => ({ default: module.Dashboard })));
+const Records = lazy(() => import("./views/Records.jsx").then((module) => ({ default: module.Records })));
+const Relations = lazy(() => import("./views/Relations.jsx").then((module) => ({ default: module.Relations })));
+const Equipment = lazy(() => import("./views/Equipment.jsx").then((module) => ({ default: module.Equipment })));
+const Automation = lazy(() => import("./views/Automation.jsx").then((module) => ({ default: module.Automation })));
+const Reminders = lazy(() => import("./views/Reminders.jsx").then((module) => ({ default: module.Reminders })));
+const Reports = lazy(() => import("./views/Reports.jsx").then((module) => ({ default: module.Reports })));
+const Integrations = lazy(() => import("./views/Integrations.jsx").then((module) => ({ default: module.Integrations })));
+const Assistant = lazy(() => import("./views/Assistant.jsx").then((module) => ({ default: module.Assistant })));
+const Settings = lazy(() => import("./views/Settings.jsx").then((module) => ({ default: module.Settings })));
 
 const LINKED_EMAILS_SHEET = "Correos vinculados";
 const LINKED_EMAILS_HEADERS = ["CORREOS EMISOR", "CORREOS RECEPTORES"];
@@ -146,9 +148,11 @@ function App() {
   const reminderStateRef = useRef(loadStored("operation_ai_reminder_delivery_state", {}));
   const globalStatusStateRef = useRef(loadStored("operation_ai_global_status_state", {}));
   const globalOtChangeStateRef = useRef(loadStored(GLOBAL_OT_CHANGE_STATE_KEY, {}));
+  const debouncedSearch = useDebouncedValue(search);
+  const debouncedEquipmentSearch = useDebouncedValue(equipmentSearch);
 
   const filteredRecords = useMemo(() => {
-    const query = normalizeText(search);
+    const query = normalizeText(debouncedSearch);
     return records.filter((record) => {
       const matchesSearch =
         !query ||
@@ -159,7 +163,7 @@ function App() {
       const matchesType = !filters.type || record.type === filters.type;
       return matchesSearch && matchesDocument && matchesSheet && matchesType;
     });
-  }, [records, search, filters]);
+  }, [records, debouncedSearch, filters]);
 
   useEffect(() => {
     saveSources(sources);
@@ -518,6 +522,7 @@ function App() {
       addLog("Sincronizacion omitida: ya hay una sincronizacion en curso.");
       return;
     }
+    const startedAt = nowMs();
     syncInProgressRef.current = true;
     setSyncStatus("Sincronizando...");
     addLog(automatic ? "Inicio de sincronizacion automatica." : "Inicio de sincronizacion.");
@@ -553,6 +558,7 @@ function App() {
     setRelations(nextRelations);
     setAlerts(detectAnomalies(nextRecords, nextRelations));
     setSyncStatus(`${successCount ? "Actualizado" : "Datos conservados"} ${new Date().toLocaleTimeString("es-CO")}`);
+    addLog(`Rendimiento: sincronizacion completada en ${formatDuration(startedAt)}.`);
     syncInProgressRef.current = false;
   }
 
@@ -621,8 +627,9 @@ function App() {
   }
 
   const runAnalysis = () => {
+    const startedAt = nowMs();
     setAlerts(detectAnomalies(records, relations));
-    addLog("Analisis local completado.");
+    addLog(`Analisis local completado en ${formatDuration(startedAt)}.`);
   };
 
   const logoutGoogleAccount = () => {
@@ -747,103 +754,106 @@ function App() {
           </div>
         </header>
 
-        {activeView === "dashboard" && (
-          <Dashboard
-            documents={documents}
-            records={filteredRecords}
-            alerts={alerts}
-            rankingMode={rankingMode}
-            setRankingMode={setRankingMode}
-            runAnalysis={runAnalysis}
-          />
-        )}
+        <Suspense fallback={<section className="panel"><p className="muted">Cargando vista...</p></section>}>
+          {activeView === "dashboard" && (
+            <Dashboard
+              documents={documents}
+              records={filteredRecords}
+              alerts={alerts}
+              rankingMode={rankingMode}
+              setRankingMode={setRankingMode}
+              runAnalysis={runAnalysis}
+            />
+          )}
 
-        {activeView === "records" && (
-          <Records
-            addLog={addLog}
-            documents={documents}
-            filters={filters}
-            notes={notes}
-            notificationConfig={notificationConfig}
-            records={filteredRecords}
-            setFilters={setFilters}
-            setNotes={setNotes}
-            sourceRecords={records}
-            exportCurrentRecords={exportCurrentRecords}
-            tokenRef={tokenRef}
-            onSaved={syncAll}
-          />
-        )}
+          {activeView === "records" && (
+            <Records
+              addLog={addLog}
+              documents={documents}
+              filters={filters}
+              notes={notes}
+              notificationConfig={notificationConfig}
+              records={filteredRecords}
+              setFilters={setFilters}
+              setNotes={setNotes}
+              sourceRecords={records}
+              exportCurrentRecords={exportCurrentRecords}
+              tokenRef={tokenRef}
+              onSaved={syncAll}
+            />
+          )}
 
-        {activeView === "relations" && <Relations relations={relations} />}
+          {activeView === "relations" && <Relations relations={relations} />}
 
-        {activeView === "equipment" && (
-          <Equipment
-            relations={relations}
-            equipmentSearch={equipmentSearch}
-            setEquipmentSearch={setEquipmentSearch}
-          />
-        )}
+          {activeView === "equipment" && (
+            <Equipment
+              relations={relations}
+              equipmentSearch={equipmentSearch}
+              debouncedEquipmentSearch={debouncedEquipmentSearch}
+              setEquipmentSearch={setEquipmentSearch}
+            />
+          )}
 
-        {activeView === "automation" && (
-          <Automation
-            alerts={alerts}
-            automations={automations}
-            documents={documents}
-            setAutomations={setAutomations}
-            pollInterval={pollInterval}
-            records={records}
-            relations={relations}
-            syncLog={syncLog}
-          />
-        )}
+          {activeView === "automation" && (
+            <Automation
+              alerts={alerts}
+              automations={automations}
+              documents={documents}
+              setAutomations={setAutomations}
+              pollInterval={pollInterval}
+              records={records}
+              relations={relations}
+              syncLog={syncLog}
+            />
+          )}
 
-        {activeView === "reminders" && (
-          <Reminders
-            documents={documents}
-            notes={notes}
-            notificationConfig={notificationConfig}
-            setNotes={setNotes}
-            tokenRef={tokenRef}
-            addLog={addLog}
-            onSaved={syncAll}
-          />
-        )}
+          {activeView === "reminders" && (
+            <Reminders
+              documents={documents}
+              notes={notes}
+              notificationConfig={notificationConfig}
+              setNotes={setNotes}
+              tokenRef={tokenRef}
+              addLog={addLog}
+              onSaved={syncAll}
+            />
+          )}
 
-        {activeView === "reports" && (
-          <Reports
-            alerts={alerts}
-            documents={documents}
-            notificationConfig={notificationConfig}
-            records={records}
-            relations={relations}
-            reports={reports}
-            setReports={setReports}
-          />
-        )}
+          {activeView === "reports" && (
+            <Reports
+              alerts={alerts}
+              documents={documents}
+              notificationConfig={notificationConfig}
+              records={records}
+              relations={relations}
+              reports={reports}
+              setReports={setReports}
+            />
+          )}
 
-        {activeView === "integrations" && (
-          <Integrations config={notificationConfig} setConfig={updateNotificationConfig} tokenRef={tokenRef} />
-        )}
+          {activeView === "integrations" && (
+            <Integrations config={notificationConfig} setConfig={updateNotificationConfig} tokenRef={tokenRef} />
+          )}
 
-        {activeView === "assistant" && (
-          <Assistant
-            messages={assistantMessages}
-            question={assistantQuestion}
-            setQuestion={setAssistantQuestion}
-            onSubmit={askAssistant}
-          />
-        )}
+          {activeView === "assistant" && (
+            <Assistant
+              messages={assistantMessages}
+              question={assistantQuestion}
+              setQuestion={setAssistantQuestion}
+              onSubmit={askAssistant}
+            />
+          )}
 
-        {activeView === "settings" && (
-          <Settings
-            sources={sources}
-            newSource={newSource}
-            setNewSource={setNewSource}
-            addSource={addSource}
-            removeSource={removeSource}
-          />
-        )}
+          {activeView === "settings" && (
+            <Settings
+              sources={sources}
+              newSource={newSource}
+              setNewSource={setNewSource}
+              addSource={addSource}
+              removeSource={removeSource}
+            />
+          )}
+        </Suspense>
       </main>
     </div>
   );
@@ -852,6 +862,17 @@ function App() {
 function noteUsesEmail(note) {
   const channel = normalizeText(note?.channel);
   return channel === "email" || channel === "email y telegram";
+}
+
+function nowMs() {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
+function formatDuration(startedAt) {
+  const elapsed = Math.max(0, Math.round(nowMs() - startedAt));
+  return elapsed >= 1000 ? `${(elapsed / 1000).toFixed(1)}s` : `${elapsed}ms`;
 }
 
 function getConfiguredEmailRecipients(config) {

@@ -61,6 +61,7 @@ const MAX_EMAIL_FIELD_VALUE_LENGTH = 500;
 const MAX_TRACKED_CHANGE_VALUE_LENGTH = 80;
 const MAX_TRACKED_FIELDS_PER_RECORD = 12;
 const MAX_PERSISTED_OT_CHANGE_STATE_CHARS = 600000;
+const EMAIL_SECTION_SEPARATOR = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
 const GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state_v2";
 const LEGACY_GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state";
 const WORK_ORDER_SOURCE_KEYWORD = "ORDENES DE TRABAJO TYC";
@@ -272,7 +273,7 @@ function App() {
       const previous = previousStatuses[key];
       if (!previous) return;
       if (normalizeText(previous.status) !== normalizeText(item.status)) {
-        changes.push({ ...item, previousStatus: previous.status });
+        changes.push({ ...item, previousStatus: previous.status, changedAt: new Date().toLocaleString("es-CO") });
       }
     });
 
@@ -282,7 +283,7 @@ function App() {
 
     globalStatusSendInProgressRef.current = true;
     try {
-      const enrichedChanges = enrichChangesWithWorkOrderContext(changes, records);
+      const enrichedChanges = enrichChangesForChangeEmail(changes, records);
       const changeRows = enrichedChanges.map(mapStatusChangeToSheetRow);
       const pending = await prepareDetectedChanges(changeRows);
       if (!pending.spreadsheetId || !pending.pendingRows.length) return;
@@ -327,7 +328,7 @@ function App() {
 
     globalOtChangeSendInProgressRef.current = true;
     try {
-      const enrichedChanges = enrichChangesWithWorkOrderContext(changes, records);
+      const enrichedChanges = enrichChangesForChangeEmail(changes, records);
       const changeRows = enrichedChanges.map(mapOtFieldChangeToSheetRow);
       const pending = await prepareDetectedChanges(changeRows);
       if (!pending.spreadsheetId || !pending.pendingRows.length) return;
@@ -996,6 +997,7 @@ function buildStatusSnapshot(records) {
       sheetName: record.sheetName || "",
       rowNumber: record.rowNumber || "",
       recordLabel: `${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}`,
+      userResponsible: getRecordResponsibleUser(record),
       allColumns: buildEmailRecordColumns(record),
     };
     return snapshot;
@@ -1234,16 +1236,42 @@ function normalizeOtForReminder(value) {
 
 function buildReminderEmailMessage(note, record, kind, statusInfo = {}) {
   if (kind === "cambio_estado") {
+    const previousValue = formatChangeValue(statusInfo.previousStatus);
+    const nextValue = formatChangeValue(statusInfo.currentStatus);
     return [
-      "Notificacion de cambio de estado",
+      "REGISTRO DE MODIFICACION",
       "",
       `OT: ${note.associatedOt || "NO ESPECIFICADO"}`,
-      `Estado anterior: ${statusInfo.previousStatus || "NO ESPECIFICADO"}`,
-      `Estado nuevo: ${statusInfo.currentStatus || "NO ESPECIFICADO"}`,
+      record ? `Documento: ${record.sourceName || "NO ESPECIFICADO"}` : "",
+      record ? `Hoja: ${record.sheetName || "NO ESPECIFICADO"}` : "",
       "",
+      EMAIL_SECTION_SEPARATOR,
+      "",
+      "CAMBIO REALIZADO",
+      "",
+      "Campo: ESTADO",
+      "",
+      `Valor anterior: ${previousValue}`,
+      `Valor nuevo: ${nextValue}`,
+      "",
+      EMAIL_SECTION_SEPARATOR,
+      "",
+      "TRAZABILIDAD",
+      "",
+      `Fecha: ${new Date().toLocaleString("es-CO")}`,
+      record ? `Usuario: ${getRecordResponsibleUser(record) || "NO DISPONIBLE"}` : "Usuario: NO DISPONIBLE",
       `Titulo: ${note.title || "NO ESPECIFICADO"}`,
       `Detalle: ${note.detail || "Sin detalle"}`,
-      record ? `Registro: ${record.sourceName} / ${record.sheetName} / fila ${record.rowNumber}` : "",
+      record ? `Registro: ${formatRecordTrace(record)}` : "",
+      "",
+      EMAIL_SECTION_SEPARATOR,
+      "",
+      "RESUMEN",
+      "",
+      buildChangeSummary("ESTADO", previousValue, nextValue),
+      "Estado: Actualizado correctamente.",
+      "",
+      buildAllColumnsMessage(buildEmailRecordColumns(record)),
     ].filter(Boolean).join("\n");
   }
   return [
@@ -1261,38 +1289,83 @@ function buildReminderEmailMessage(note, record, kind, statusInfo = {}) {
 }
 
 function buildAutomaticStatusChangeMessage(change) {
+  const previousValue = formatChangeValue(change.previousStatus);
+  const nextValue = formatChangeValue(change.status);
   return [
-    "Notificacion automatica de cambio de estado",
+    "REGISTRO DE MODIFICACION",
     "",
     `OT: ${change.ot || "NO ESPECIFICADO"}`,
-    `Estado anterior: ${change.previousStatus || "NO ESPECIFICADO"}`,
-    `Estado nuevo: ${change.status || "NO ESPECIFICADO"}`,
-    change.workOrderDescription ? `Descripcion del fallo: ${change.workOrderDescription}` : "",
-    change.workOrderComment ? `Comentario: ${change.workOrderComment}` : "",
-    `Registro: ${change.recordLabel || "NO ESPECIFICADO"}`,
+    `Documento: ${change.sourceName || extractDocumentFromRecordLabel(change.recordLabel) || "NO ESPECIFICADO"}`,
+    `Hoja: ${change.sheetName || extractSheetFromRecordLabel(change.recordLabel) || "NO ESPECIFICADO"}`,
+    "",
+    EMAIL_SECTION_SEPARATOR,
+    "",
+    "CAMBIO REALIZADO",
+    "",
+    "Campo: ESTADO",
+    "",
+    `Valor anterior: ${previousValue}`,
+    `Valor nuevo: ${nextValue}`,
+    "",
+    change.workOrderDescription ? `Descripcion del fallo:\n${change.workOrderDescription}` : "",
+    change.workOrderComment ? `Comentario:\n${change.workOrderComment}` : "",
+    "",
+    EMAIL_SECTION_SEPARATOR,
+    "",
+    "TRAZABILIDAD",
+    "",
+    `Fecha: ${change.changedAt || new Date().toLocaleString("es-CO")}`,
+    `Usuario: ${change.userResponsible || "NO DISPONIBLE"}`,
+    `Registro: ${formatChangeRecordTrace(change)}`,
+    "",
+    EMAIL_SECTION_SEPARATOR,
+    "",
+    "RESUMEN",
+    "",
+    buildChangeSummary("ESTADO", previousValue, nextValue),
+    "Estado: Actualizado correctamente.",
     "",
     buildAllColumnsMessage(change.allColumns),
   ].filter(Boolean).join("\n");
 }
 
 function buildAutomaticOtFieldChangeMessage(change) {
+  const previousValue = formatChangeValue(change.previousValue);
+  const nextValue = formatChangeValue(change.newValue);
+  const field = change.field || "NO ESPECIFICADO";
   return [
-    "Notificacion automatica de cambio en OT",
+    "REGISTRO DE MODIFICACION",
     "",
     `OT: ${change.ot || "NO ESPECIFICADO"}`,
-    "",
     `Documento: ${change.documentName || "NO ESPECIFICADO"}`,
     `Hoja: ${change.sheetName || "NO ESPECIFICADO"}`,
     "",
-    `Campo modificado: ${change.field || "NO ESPECIFICADO"}`,
-    `Valor anterior: ${formatChangeValue(change.previousValue)}`,
-    `Valor nuevo: ${formatChangeValue(change.newValue)}`,
+    EMAIL_SECTION_SEPARATOR,
     "",
-    change.workOrderDescription ? `Descripcion del fallo: ${change.workOrderDescription}` : "",
-    change.workOrderComment ? `Comentario: ${change.workOrderComment}` : "",
+    "CAMBIO REALIZADO",
+    "",
+    `Campo: ${field}`,
+    "",
+    `Valor anterior: ${previousValue}`,
+    `Valor nuevo: ${nextValue}`,
+    "",
+    change.workOrderDescription ? `Descripcion del fallo:\n${change.workOrderDescription}` : "",
+    change.workOrderComment ? `Comentario:\n${change.workOrderComment}` : "",
+    "",
+    EMAIL_SECTION_SEPARATOR,
+    "",
+    "TRAZABILIDAD",
+    "",
     `Fecha del cambio: ${change.changedAt || "NO ESPECIFICADO"}`,
-    `Usuario responsable: ${change.userResponsible || "NO DISPONIBLE"}`,
-    change.recordLabel ? `Registro: ${change.recordLabel}` : "",
+    `Usuario: ${change.userResponsible || "NO DISPONIBLE"}`,
+    `Registro: ${formatChangeRecordTrace(change)}`,
+    "",
+    EMAIL_SECTION_SEPARATOR,
+    "",
+    "RESUMEN",
+    "",
+    buildChangeSummary(field, previousValue, nextValue),
+    "Estado: Actualizado correctamente.",
     "",
     buildAllColumnsMessage(change.allColumns),
   ].filter(Boolean).join("\n");
@@ -1300,12 +1373,15 @@ function buildAutomaticOtFieldChangeMessage(change) {
 
 function buildChangeDigestMessage(title, changes, getMessage) {
   return [
-    title,
+    title.toUpperCase(),
     "",
     `Total de cambios detectados: ${changes.length}`,
     "",
     ...changes.flatMap((change, index) => [
-      `--- Cambio ${index + 1} ---`,
+      EMAIL_SECTION_SEPARATOR,
+      `CAMBIO ${index + 1}`,
+      EMAIL_SECTION_SEPARATOR,
+      "",
       getMessage(change),
       "",
     ]),
@@ -1315,9 +1391,35 @@ function buildChangeDigestMessage(title, changes, getMessage) {
 function buildAllColumnsMessage(columns) {
   if (!columns?.length) return "";
   return [
-    "Todas las columnas del registro:",
-    ...columns.map((column) => `- ${column.header}: ${column.value}`),
+    EMAIL_SECTION_SEPARATOR,
+    "",
+    "TODAS LAS COLUMNAS DEL REGISTRO",
+    "",
+    ...columns.map((column) => `${column.header}: ${column.value}`),
   ].join("\n");
+}
+
+function buildChangeSummary(field, previousValue, nextValue) {
+  return `Se actualizo el campo "${field}", cambiando el valor de "${previousValue}" a "${nextValue}".`;
+}
+
+function formatRecordTrace(record) {
+  return [
+    record?.sourceName || "NO ESPECIFICADO",
+    record?.sheetName || "NO ESPECIFICADO",
+    record?.rowNumber ? `Fila ${record.rowNumber}` : "",
+  ].filter(Boolean).join(" -> ");
+}
+
+function formatChangeRecordTrace(change) {
+  const documentName = change.sourceName || change.documentName || extractDocumentFromRecordLabel(change.recordLabel) || "NO ESPECIFICADO";
+  const sheetName = change.sheetName || extractSheetFromRecordLabel(change.recordLabel) || "NO ESPECIFICADO";
+  const rowNumber = change.rowNumber || extractRowFromRecordLabel(change.recordLabel);
+  return [
+    documentName,
+    sheetName,
+    rowNumber ? `Fila ${rowNumber}` : "",
+  ].filter(Boolean).join(" -> ");
 }
 
 function mapStatusChangeToSheetRow(change) {
@@ -1342,6 +1444,41 @@ function mapOtFieldChangeToSheetRow(change) {
     "descripcion del fallo": formatChangeValue(change.workOrderDescription),
     comentario: formatChangeValue(change.workOrderComment),
   };
+}
+
+function enrichChangesForChangeEmail(changes, records) {
+  return enrichChangesWithSourceRecordColumns(enrichChangesWithWorkOrderContext(changes, records), records);
+}
+
+function enrichChangesWithSourceRecordColumns(changes, records) {
+  const columnsByRecordKey = buildEmailColumnsByRecordKey(records);
+  return changes.map((change) => {
+    const columns = columnsByRecordKey.get(buildChangeRecordKey(change));
+    return columns?.length ? { ...change, allColumns: columns } : change;
+  });
+}
+
+function buildEmailColumnsByRecordKey(records) {
+  return (records || []).reduce((columnsByRecordKey, record) => {
+    const key = buildRecordLookupKey(record.sourceName, record.sheetName, record.rowNumber);
+    if (key) columnsByRecordKey.set(key, buildEmailRecordColumns(record));
+    return columnsByRecordKey;
+  }, new Map());
+}
+
+function buildChangeRecordKey(change) {
+  const documentName = change.sourceName || change.documentName || extractDocumentFromRecordLabel(change.recordLabel);
+  const sheetName = change.sheetName || extractSheetFromRecordLabel(change.recordLabel);
+  const rowNumber = change.rowNumber || extractRowFromRecordLabel(change.recordLabel);
+  return buildRecordLookupKey(documentName, sheetName, rowNumber);
+}
+
+function buildRecordLookupKey(documentName, sheetName, rowNumber) {
+  return [
+    normalizeText(documentName),
+    normalizeText(sheetName),
+    String(rowNumber || "").trim(),
+  ].join("::");
 }
 
 function enrichChangesWithWorkOrderContext(changes, records) {
@@ -1430,6 +1567,11 @@ function extractDocumentFromRecordLabel(label) {
 
 function extractSheetFromRecordLabel(label) {
   return String(label || "").split(" / ")[1] || "";
+}
+
+function extractRowFromRecordLabel(label) {
+  const match = String(label || "").match(/fila\s+(\d+)/i);
+  return match ? match[1] : "";
 }
 
 function formatChangeValue(value) {

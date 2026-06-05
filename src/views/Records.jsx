@@ -740,7 +740,6 @@ export function Records({
                       const clase = getMatrixField(spRecord, ["Clase de Solicitud", "Clase de solicitud", "Clase"]);
                       const ordenCompra = getMatrixField(spRecord, ["ORDENES DE COMPRA", "ORDEN DE COMPRA", "ORDEN_DE_COMPRA", "OC"]);
                       const plazoEntrega = getMatrixField(spRecord, ["PLAZO DE ENTREGA", "Plazo de Entrega", "Plazo de entrega", "Plazo"]);
-                      const valorCompra = getMatrixField(spRecord, ["VALOR COMPRA"]);
                       const estado = getMatrixField(spRecord, ["Estado Actual de la SP*", "Estado Actual de la SP", "Estado Actual", "Estado"]);
                       const observacion = getMatrixField(spRecord, ["Observación (Descripción General SP)", "Observación", "Descripción General SP", "Observacion (Descripcion General SP)", "Observacion", "Descripcion General SP", "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICTUD"]);
                       
@@ -792,10 +791,6 @@ export function Records({
                             <div>
                               <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>Plazo de Entrega</span>
                               <span style={{ color: "var(--ink)", fontWeight: "600" }}>{plazoEntrega}</span>
-                            </div>
-                            <div>
-                              <span style={{ color: "var(--muted)", display: "block", fontSize: "10px", textTransform: "uppercase" }}>Valor de Compra</span>
-                              <span style={{ color: "var(--ink)", fontWeight: "600" }}>{valorCompra}</span>
                             </div>
                           </div>
 

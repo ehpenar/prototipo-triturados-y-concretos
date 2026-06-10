@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { sum, cleanKey, formatMoney, normalizeText, parseMoney } from "../utils/helpers.js";
 import { trendPoints } from "../utils/analysis.js";
 import { EmptyState } from "../components/EmptyState.jsx";
@@ -41,23 +41,67 @@ const RANKING_SOURCE_DETAILS = {
 
 const ALERTS_SOURCE_DETAIL = "Fuente: todos los registros sincronizados. Revisa costos atípicos, registros sin estado y registros operacionales sin fecha reconocida.";
 const TREND_SOURCE_DETAIL = "Fuente: registros con una fecha reconocida en cualquier documento. Columnas detectadas por nombre: FECHA, DIA, CREADO, EMISION, CIERRE o ENTREGA.";
+const KPI_TIME_FILTER_OPTIONS = [
+  { value: "all", label: "Total histórico" },
+  { value: "current-year", label: "Año actual" },
+  { value: "last-6-months", label: "Últimos 6 meses" },
+  { value: "last-3-months", label: "Últimos 3 meses" },
+  { value: "last-month", label: "Último mes" },
+  { value: "last-week", label: "Última semana" },
+  { value: "month-0", label: "Enero" },
+  { value: "month-1", label: "Febrero" },
+  { value: "month-2", label: "Marzo" },
+  { value: "month-3", label: "Abril" },
+  { value: "month-4", label: "Mayo" },
+  { value: "month-5", label: "Junio" },
+  { value: "month-6", label: "Julio" },
+  { value: "month-7", label: "Agosto" },
+  { value: "month-8", label: "Septiembre" },
+  { value: "month-9", label: "Octubre" },
+  { value: "month-10", label: "Noviembre" },
+  { value: "month-11", label: "Diciembre" },
+];
 
 export function Dashboard({ documents, records, alerts, rankingMode, setRankingMode, runAnalysis }) {
+  const [kpiTimeFilter, setKpiTimeFilter] = useState("all");
+  const timeFilteredRecords = useMemo(
+    () => filterRecordsByKpiTimeRange(records, kpiTimeFilter),
+    [records, kpiTimeFilter],
+  );
+  const selectedTimeFilter = KPI_TIME_FILTER_OPTIONS.find((option) => option.value === kpiTimeFilter) || KPI_TIME_FILTER_OPTIONS[0];
   const dashboardMetrics = useMemo(() => ({
-    totalCost: calculateDashboardDetectedCost(records),
-    totalHours: sum(records.map((record) => record.normalized.hoursNumber)),
+    totalCost: calculateDashboardDetectedCost(timeFilteredRecords),
+    totalHours: sum(timeFilteredRecords.map((record) => record.normalized.hoursNumber)),
     equipmentCount: new Set(records.map((record) => cleanKey(record.normalized.equipment)).filter(Boolean)).size,
     trend: trendPoints(records),
     workOrderRows: countWorkOrderRows(records),
-  }), [records]);
+  }), [records, timeFilteredRecords]);
 
   return (
     <section className="view active">
+      <section className="panel dashboard-kpi-filter">
+        <div>
+          <h2>Filtro temporal de KPIs</h2>
+          <p className="note">
+            Aplica solo a Costo detectado y Horas. Los demás indicadores conservan el total histórico.
+          </p>
+        </div>
+        <label>
+          Periodo
+          <select value={kpiTimeFilter} onChange={(event) => setKpiTimeFilter(event.target.value)}>
+            {KPI_TIME_FILTER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
       <div className="kpi-grid">
         <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} source={KPI_SOURCE_DETAILS.records} />
         <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en ORDENES DE TRABAJO TYC" source={KPI_SOURCE_DETAILS.workOrders} />
-        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint="FACTURACION + Matriz de Seguimiento" source={KPI_SOURCE_DETAILS.cost} />
-        <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint="Horas reconocidas en reportes" source={KPI_SOURCE_DETAILS.hours} />
+        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint={`FACTURACION + Matriz de Seguimiento · ${selectedTimeFilter.label}`} source={KPI_SOURCE_DETAILS.cost} />
+        <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint={`Horas reconocidas en reportes · ${selectedTimeFilter.label}`} source={KPI_SOURCE_DETAILS.hours} />
         <Kpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" source={KPI_SOURCE_DETAILS.equipment} />
       </div>
       <div className="split">
@@ -122,6 +166,38 @@ function calculateDashboardDetectedCost(records) {
     if (isDashboardBillingCostRecord(record)) return getBillingCostValue(record);
     return 0;
   }));
+}
+
+function filterRecordsByKpiTimeRange(records, filter) {
+  if (filter === "all") return records;
+  const now = new Date();
+  const rangeStart = getKpiRangeStart(filter, now);
+  const monthMatch = getKpiMonthMatch(filter);
+  return records.filter((record) => {
+    const date = record.normalized.dateValue;
+    if (!date) return false;
+    if (monthMatch !== null) return date.getMonth() === monthMatch;
+    return rangeStart ? date >= rangeStart && date <= now : true;
+  });
+}
+
+function getKpiRangeStart(filter, now) {
+  if (filter === "current-year") return new Date(now.getFullYear(), 0, 1);
+  if (filter === "last-6-months") return addMonths(now, -6);
+  if (filter === "last-3-months") return addMonths(now, -3);
+  if (filter === "last-month") return addMonths(now, -1);
+  if (filter === "last-week") return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+  return null;
+}
+
+function getKpiMonthMatch(filter) {
+  if (!filter.startsWith("month-")) return null;
+  const month = Number(filter.replace("month-", ""));
+  return Number.isInteger(month) && month >= 0 && month <= 11 ? month : null;
+}
+
+function addMonths(date, amount) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds());
 }
 
 function Kpi({ label, value, hint, source }) {

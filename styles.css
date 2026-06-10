@@ -265,6 +265,23 @@ textarea {
   gap: 14px;
 }
 
+.dashboard-kpi-filter {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+}
+
+.dashboard-kpi-filter label {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .kpi, .panel, .assistant-panel {
   background: var(--surface);
   border: 1px solid var(--line);

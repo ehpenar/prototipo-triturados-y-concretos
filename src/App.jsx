@@ -16,6 +16,7 @@ import {
   getStoredGoogleToken,
   loadSpreadsheet,
   sendGmailMessage,
+  shouldForceAccountSelect,
   updateSheetCell,
   upsertSheetRows,
 } from "./utils/googleSheets.js";
@@ -191,6 +192,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (shouldForceAccountSelect()) {
+      setSyncStatus("Selecciona cuenta Google para sincronizar");
+      return;
+    }
     syncAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -638,10 +643,11 @@ function App() {
     addLog(`Analisis local completado en ${formatDuration(startedAt)}.`);
   };
 
-  const logoutGoogleAccount = () => {
+  const chooseGoogleAccountAndSync = () => {
     clearGoogleSession(tokenRef);
-    setSyncStatus("Sesion Google cerrada");
-    addLog("Sesion Google cerrada. Pulsa Sincronizar para elegir otra cuenta.");
+    setSyncStatus("Selecciona cuenta Google para sincronizar");
+    addLog("Sesion Google cerrada. El selector de cuentas se abrira para elegir otra cuenta.");
+    syncAll(sources, true);
   };
 
   const addSource = (event) => {
@@ -725,11 +731,11 @@ function App() {
 
         <div className="sync-card">
           <span>{syncStatus}</span>
-          <button onClick={() => syncAll(sources, true)} type="button">
-            Sincronizar
+          <button onClick={chooseGoogleAccountAndSync} type="button">
+            Elegir cuenta y sincronizar
           </button>
-          <button className="secondary-button" onClick={logoutGoogleAccount} type="button">
-            Cerrar sesion Google
+          <button className="secondary-button" onClick={chooseGoogleAccountAndSync} type="button">
+            Cambiar cuenta Google
           </button>
         </div>
       </aside>

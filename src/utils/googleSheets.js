@@ -11,6 +11,7 @@ import { parseValues, classifyDocument } from "./analysis.js";
 const GOOGLE_ACCESS_TOKEN_KEY = "google_access_token";
 const GOOGLE_TOKEN_EXPIRES_AT_KEY = "google_access_token_expires_at";
 const GOOGLE_TOKEN_LINKED_AT_KEY = "google_access_token_linked_at";
+const GOOGLE_FORCE_ACCOUNT_SELECT_KEY = "google_force_account_select";
 const TOKEN_REFRESH_MARGIN_MS = 60 * 1000;
 
 export async function loadSpreadsheet(source, tokenRef, allowAuthPrompt = true) {
@@ -188,25 +189,47 @@ export async function updateSheetCell(spreadsheetId, sheetName, column, row, val
   });
 }
 
-export async function sendGmailMessage({ from = "", to = "", subject = "", message = "" }, tokenRef) {
+export async function sendGmailMessage({ from = "", to = "", subject = "", message = "", htmlMessage = "" }, tokenRef) {
   const recipients = String(to || "").split(",").map((item) => item.trim()).filter(Boolean);
   if (!recipients.length) throw new Error("Falta al menos un correo receptor");
 
+  const boundary = `operation-ai-${Date.now()}`;
   const headers = [
     from ? `From: ${sanitizeEmailHeader(from)}` : "",
     `To: ${recipients.map(sanitizeEmailHeader).join(", ")}`,
     `Subject: ${encodeMimeHeader(subject || "Prueba de correo")}`,
     "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=UTF-8",
-    "Content-Transfer-Encoding: 8bit",
+    htmlMessage
+      ? `Content-Type: multipart/alternative; boundary="${boundary}"`
+      : "Content-Type: text/plain; charset=UTF-8",
   ].filter(Boolean);
-  const mime = `${headers.join("\r\n")}\r\n\r\n${message || ""}`;
+  const body = htmlMessage
+    ? buildMultipartEmailBody(boundary, message, htmlMessage)
+    : `Content-Transfer-Encoding: 8bit\r\n\r\n${message || ""}`;
+  const mime = `${headers.join("\r\n")}\r\n\r\n${body}`;
   const url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
 
   return googleFetch(url, tokenRef, {
     method: "POST",
     body: JSON.stringify({ raw: toBase64Url(mime) }),
   });
+}
+
+function buildMultipartEmailBody(boundary, message, htmlMessage) {
+  return [
+    `--${boundary}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    message || "",
+    `--${boundary}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    htmlMessage || "",
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
 }
 
 function sanitizeEmailHeader(value) {
@@ -260,6 +283,9 @@ export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt =
     clearStoredGoogleToken();
     tokenRef.current = "";
   }
+  if (!tokenRef.current && allowAuthPrompt) {
+    tokenRef.current = await requestGoogleTokenWithFallback();
+  }
   if (tokenRef.current) headers.Authorization = `Bearer ${tokenRef.current}`;
   const response = await fetch(url, { ...options, headers });
   if (response.status === 401 || response.status === 403) {
@@ -270,13 +296,7 @@ export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt =
       throw new Error(buildGoogleAuthError(response.status, detail));
     }
     if (!allowAuthPrompt) {
-      try {
-        const token = await requestGoogleToken("");
-        tokenRef.current = token;
-        return googleFetch(url, tokenRef, options, allowAuthPrompt, true);
-      } catch {
-        throw new Error("Autorizacion requerida. Pulsa Sincronizar para iniciar sesion con Google.");
-      }
+      throw new Error("Autorizacion requerida. Pulsa Elegir cuenta y sincronizar para iniciar sesion con Google.");
     }
     const token = await requestGoogleTokenWithFallback();
     tokenRef.current = token;
@@ -314,6 +334,11 @@ export function clearGoogleSession(tokenRef) {
     }
   }
   clearStoredGoogleToken();
+  try {
+    localStorage.setItem(GOOGLE_FORCE_ACCOUNT_SELECT_KEY, "1");
+  } catch {
+    // If storage is unavailable, the token cleanup still forces a fresh authorization.
+  }
   if (tokenRef) tokenRef.current = "";
 }
 
@@ -342,9 +367,30 @@ export function requestGoogleToken(prompt = "") {
 
 async function requestGoogleTokenWithFallback() {
   try {
-    return await requestGoogleToken("select_account");
+    const forceAccountSelect = shouldForceAccountSelect();
+    const token = await requestGoogleToken(forceAccountSelect ? "select_account consent" : "select_account");
+    clearForceAccountSelect();
+    return token;
   } catch {
-    return requestGoogleToken("select_account consent");
+    const token = await requestGoogleToken("select_account consent");
+    clearForceAccountSelect();
+    return token;
+  }
+}
+
+export function shouldForceAccountSelect() {
+  try {
+    return localStorage.getItem(GOOGLE_FORCE_ACCOUNT_SELECT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function clearForceAccountSelect() {
+  try {
+    localStorage.removeItem(GOOGLE_FORCE_ACCOUNT_SELECT_KEY);
+  } catch {
+    // Ignore cleanup errors.
   }
 }
 

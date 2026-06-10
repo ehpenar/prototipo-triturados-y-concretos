@@ -75,14 +75,15 @@ export function parseDate(value) {
   if (!value) return null;
   if (value instanceof Date) return value;
   const text = String(value).trim();
+  const localMatch = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (localMatch) {
+    const [, day, month, year, hour = "0", minute = "0", second = "0"] = localMatch;
+    const fullYear = year.length === 2 ? `20${year}` : year;
+    const parsed = new Date(Number(fullYear), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
   const direct = new Date(text);
-  if (!Number.isNaN(direct.getTime())) return direct;
-  const match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
-  if (!match) return null;
-  const [, day, month, year] = match;
-  const fullYear = year.length === 2 ? `20${year}` : year;
-  const parsed = new Date(Number(fullYear), Number(month) - 1, Number(day));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return Number.isNaN(direct.getTime()) ? null : direct;
 }
 
 export function formatMoney(value) {

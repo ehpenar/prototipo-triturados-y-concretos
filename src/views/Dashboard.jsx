@@ -64,11 +64,15 @@ const KPI_TIME_FILTER_OPTIONS = [
 
 export function Dashboard({ documents, records, alerts, rankingMode, setRankingMode, runAnalysis }) {
   const [kpiTimeFilter, setKpiTimeFilter] = useState("all");
+  const [kpiYearFilter, setKpiYearFilter] = useState(() => new Date().getFullYear());
+  const isMonthFilter = getKpiMonthMatch(kpiTimeFilter) !== null;
+  const availableYears = useMemo(() => buildAvailableYears(records), [records]);
   const timeFilteredRecords = useMemo(
-    () => filterRecordsByKpiTimeRange(records, kpiTimeFilter),
-    [records, kpiTimeFilter],
+    () => filterRecordsByKpiTimeRange(records, kpiTimeFilter, kpiYearFilter),
+    [records, kpiTimeFilter, kpiYearFilter],
   );
   const selectedTimeFilter = KPI_TIME_FILTER_OPTIONS.find((option) => option.value === kpiTimeFilter) || KPI_TIME_FILTER_OPTIONS[0];
+  const selectedTimeLabel = isMonthFilter ? `${selectedTimeFilter.label} ${kpiYearFilter}` : selectedTimeFilter.label;
   const dashboardMetrics = useMemo(() => ({
     totalCost: calculateDashboardDetectedCost(timeFilteredRecords),
     totalHours: sum(timeFilteredRecords.map((record) => record.normalized.hoursNumber)),
@@ -86,22 +90,36 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
             Aplica solo a Costo detectado y Horas. Los demás indicadores conservan el total histórico.
           </p>
         </div>
-        <label>
-          Periodo
-          <select value={kpiTimeFilter} onChange={(event) => setKpiTimeFilter(event.target.value)}>
-            {KPI_TIME_FILTER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="dashboard-kpi-filter-controls">
+          <label>
+            Periodo
+            <select value={kpiTimeFilter} onChange={(event) => setKpiTimeFilter(event.target.value)}>
+              {KPI_TIME_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {isMonthFilter && (
+            <label>
+              Año
+              <select value={kpiYearFilter} onChange={(event) => setKpiYearFilter(Number(event.target.value))}>
+                {availableYears.map((year) => (
+                  <option key={`kpi-year-${year}`} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
       </section>
       <div className="kpi-grid">
         <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} source={KPI_SOURCE_DETAILS.records} />
         <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en ORDENES DE TRABAJO TYC" source={KPI_SOURCE_DETAILS.workOrders} />
-        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint={`FACTURACION + Matriz de Seguimiento · ${selectedTimeFilter.label}`} source={KPI_SOURCE_DETAILS.cost} />
-        <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint={`Horas reconocidas en reportes · ${selectedTimeFilter.label}`} source={KPI_SOURCE_DETAILS.hours} />
+        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint={`FACTURACION + Matriz de Seguimiento · ${selectedTimeLabel}`} source={KPI_SOURCE_DETAILS.cost} />
+        <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint={`Horas reconocidas en reportes · ${selectedTimeLabel}`} source={KPI_SOURCE_DETAILS.hours} />
         <Kpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" source={KPI_SOURCE_DETAILS.equipment} />
       </div>
       <div className="split">
@@ -168,7 +186,7 @@ function calculateDashboardDetectedCost(records) {
   }));
 }
 
-function filterRecordsByKpiTimeRange(records, filter) {
+function filterRecordsByKpiTimeRange(records, filter, selectedYear) {
   if (filter === "all") return records;
   const now = new Date();
   const rangeStart = getKpiRangeStart(filter, now);
@@ -176,9 +194,19 @@ function filterRecordsByKpiTimeRange(records, filter) {
   return records.filter((record) => {
     const date = record.normalized.dateValue;
     if (!date) return false;
-    if (monthMatch !== null) return date.getMonth() === monthMatch;
+    if (monthMatch !== null) return date.getMonth() === monthMatch && date.getFullYear() === selectedYear;
     return rangeStart ? date >= rangeStart && date <= now : true;
   });
+}
+
+function buildAvailableYears(records) {
+  const currentYear = new Date().getFullYear();
+  const years = new Set([currentYear]);
+  records.forEach((record) => {
+    const date = record.normalized.dateValue;
+    if (date) years.add(date.getFullYear());
+  });
+  return [...years].sort((left, right) => right - left);
 }
 
 function getKpiRangeStart(filter, now) {

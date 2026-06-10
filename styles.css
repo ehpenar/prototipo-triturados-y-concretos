@@ -272,6 +272,13 @@ textarea {
   gap: 16px;
 }
 
+.dashboard-kpi-filter-controls {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
 .dashboard-kpi-filter label {
   display: grid;
   gap: 6px;

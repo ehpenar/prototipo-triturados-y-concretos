@@ -283,8 +283,12 @@ export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt =
     clearStoredGoogleToken();
     tokenRef.current = "";
   }
-  if (!tokenRef.current && allowAuthPrompt) {
-    tokenRef.current = await requestGoogleTokenWithFallback();
+  if (!tokenRef.current) {
+    if (allowAuthPrompt) {
+      tokenRef.current = await requestGoogleTokenWithFallback();
+    } else {
+      tokenRef.current = await requestGoogleTokenSilently();
+    }
   }
   if (tokenRef.current) headers.Authorization = `Bearer ${tokenRef.current}`;
   const response = await fetch(url, { ...options, headers });
@@ -296,7 +300,12 @@ export async function googleFetch(url, tokenRef, options = {}, allowAuthPrompt =
       throw new Error(buildGoogleAuthError(response.status, detail));
     }
     if (!allowAuthPrompt) {
-      throw new Error("Autorizacion requerida. Pulsa Elegir cuenta y sincronizar para iniciar sesion con Google.");
+      const token = await requestGoogleTokenSilently();
+      if (!token) {
+        throw new Error("Autorizacion requerida. Pulsa Sincronizar o Cambiar cuenta Google para renovar la sesion.");
+      }
+      tokenRef.current = token;
+      return googleFetch(url, tokenRef, options, allowAuthPrompt, true);
     }
     const token = await requestGoogleTokenWithFallback();
     tokenRef.current = token;
@@ -375,6 +384,15 @@ async function requestGoogleTokenWithFallback() {
     const token = await requestGoogleToken("select_account consent");
     clearForceAccountSelect();
     return token;
+  }
+}
+
+async function requestGoogleTokenSilently() {
+  if (shouldForceAccountSelect()) return "";
+  try {
+    return await requestGoogleToken("");
+  } catch {
+    return "";
   }
 }
 

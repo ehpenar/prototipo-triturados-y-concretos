@@ -650,6 +650,12 @@ function App() {
     syncAll(sources, true);
   };
 
+  const closeGoogleAccountSession = () => {
+    clearGoogleSession(tokenRef);
+    setSyncStatus("Sesion Google cerrada manualmente");
+    addLog("Sesion Google cerrada manualmente. Pulsa Sincronizar para iniciar sesion nuevamente.");
+  };
+
   const addSource = (event) => {
     event.preventDefault();
     if (!newSource.name.trim() || !newSource.url.trim()) return;
@@ -731,11 +737,14 @@ function App() {
 
         <div className="sync-card">
           <span>{syncStatus}</span>
-          <button onClick={chooseGoogleAccountAndSync} type="button">
-            Elegir cuenta y sincronizar
+          <button onClick={() => syncAll(sources, true)} type="button">
+            Sincronizar
           </button>
           <button className="secondary-button" onClick={chooseGoogleAccountAndSync} type="button">
             Cambiar cuenta Google
+          </button>
+          <button className="secondary-button" onClick={closeGoogleAccountSession} type="button">
+            Cerrar sesion Google
           </button>
         </div>
       </aside>

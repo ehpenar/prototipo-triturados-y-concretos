@@ -11,8 +11,8 @@ const WORK_ORDERS_SHEET_NAME = "copia de prueba respuestas de formulario 1";
 const KPI_SOURCE_DETAILS = {
   records: "Fuente: todos los documentos sincronizados desde Fuentes.",
   workOrders: "Fuente: ORDENES DE TRABAJO TYC / copia de prueba respuestas de formulario 1. Columna usada: OT.",
-  cost: "Fuente: Matriz de Seguimiento, REPORTE DE ACTIVIDADES MANTENIMIENTO / FACTURACION y HOJA RESUMEN FINANCIERO OTS / Hoja 2. Columnas: VALOR COMPRA, COSTO TOTAL, MANO OBRA.",
-  hours: "Fuente: registros clasificados con columnas de tiempo. Columnas: TIEMPO DE LA ACTIVIDAD, HORAS o HH.",
+  cost: "Fuente: Matriz de Seguimiento / Respuestas de formulario 1. Columna usada: VALOR COMPRA.",
+  hours: "Fuente: registros clasificados con columnas de tiempo y consolidado actual de mano de obra.",
   equipment: "Fuente: todos los documentos sincronizados. Columnas: EQUIPO, MAQUINA, MÁQUINA o ACTIVO.",
 };
 
@@ -76,6 +76,7 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
   const dashboardMetrics = useMemo(() => ({
     totalCost: calculateDashboardDetectedCost(timeFilteredRecords),
     totalHours: sum(timeFilteredRecords.map((record) => record.normalized.hoursNumber)),
+    totalLaborValue: calculateDashboardLaborValue(timeFilteredRecords),
     equipmentCount: new Set(records.map((record) => cleanKey(record.normalized.equipment)).filter(Boolean)).size,
     trend: trendPoints(records),
     workOrderRows: countWorkOrderRows(records),
@@ -118,8 +119,14 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
       <div className="kpi-grid">
         <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} source={KPI_SOURCE_DETAILS.records} />
         <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en ORDENES DE TRABAJO TYC" source={KPI_SOURCE_DETAILS.workOrders} />
-        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint={`FACTURACION + Matriz de Seguimiento · ${selectedTimeLabel}`} source={KPI_SOURCE_DETAILS.cost} />
-        <Kpi label="Horas" value={dashboardMetrics.totalHours.toFixed(1)} hint={`Horas reconocidas en reportes · ${selectedTimeLabel}`} source={KPI_SOURCE_DETAILS.hours} />
+        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint={`Compras realizadas (VALOR COMPRA) · ${selectedTimeLabel}`} source={KPI_SOURCE_DETAILS.cost} />
+        <Kpi
+          label="Horas"
+          value={`${dashboardMetrics.totalHours.toFixed(1)} horas`}
+          hint={`Horas reconocidas en reportes · ${selectedTimeLabel}`}
+          source={KPI_SOURCE_DETAILS.hours}
+          extraDetail={`Valor Mano de Obra: ${formatMoney(dashboardMetrics.totalLaborValue)}`}
+        />
         <Kpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" source={KPI_SOURCE_DETAILS.equipment} />
       </div>
       <div className="split">
@@ -181,9 +188,12 @@ function isWorkOrdersRecord(record) {
 function calculateDashboardDetectedCost(records) {
   return sum(records.map((record) => {
     if (isDashboardMatrixCostRecord(record)) return getMatrixPurchaseValue(record);
-    if (isDashboardBillingCostRecord(record)) return getBillingCostValue(record);
     return 0;
   }));
+}
+
+function calculateDashboardLaborValue(records) {
+  return sum(records.map((record) => (isDashboardBillingCostRecord(record) ? getBillingCostValue(record) : 0)));
 }
 
 function filterRecordsByKpiTimeRange(records, filter, selectedYear) {
@@ -228,12 +238,13 @@ function addMonths(date, amount) {
   return new Date(date.getFullYear(), date.getMonth() + amount, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds());
 }
 
-function Kpi({ label, value, hint, source }) {
+function Kpi({ label, value, hint, source, extraDetail }) {
   return (
     <article className="kpi">
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{hint}</small>
+      {extraDetail && <small>{extraDetail}</small>}
       <small className="source-detail">{source}</small>
     </article>
   );

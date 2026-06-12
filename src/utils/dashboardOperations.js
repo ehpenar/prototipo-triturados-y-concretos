@@ -213,6 +213,7 @@ function buildSpPendingList(indexes, config) {
 
 function buildOperationalIndicators(indexes, otPending, spPending, validations, alerts, duplicates) {
   const otOpen = [...indexes.workOrderByOt.values()].filter((record) => !isClosedOtStatus(getCell(record, ["ESTADO"]))).length;
+  const otTerminadas = [...indexes.workOrderByOt.values()].filter((record) => isClosedOtStatus(getCell(record, ["ESTADO"]))).length;
   const otOverdue = otPending.filter((item) => item.reasons.some((reason) => reason.toLowerCase().includes("vencida"))).length;
   const otSinRevisar = otPending.filter((item) => normalizeText(item.subtitle) === "sinrevisar").length;
   const otIncomplete = validations.filter((item) => item.entityType === "OT").length;
@@ -227,6 +228,7 @@ function buildOperationalIndicators(indexes, otPending, spPending, validations, 
     { id: "ot-overdue", label: "OT vencidas", value: otOverdue, critical: otOverdue > 0 },
     { id: "ot-sin-revisar", label: "OT sin revisar", value: otSinRevisar, critical: otSinRevisar > 0 },
     { id: "ot-incomplete", label: "OT incompletas", value: otIncomplete },
+    { id: "ot-closed", label: "OT terminadas", value: otTerminadas },
     { id: "sp-open", label: "SP pendientes", value: spOpen },
     { id: "sp-sin-oc", label: "SP sin OC", value: spSinOc, critical: spSinOc > 0 },
     { id: "sp-incomplete", label: "SP incompletas", value: spIncomplete },

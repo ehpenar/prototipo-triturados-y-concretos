@@ -3,7 +3,7 @@ import { buildOperationalControlData } from "../../utils/dashboardOperations.js"
 import { EmptyState } from "../EmptyState.jsx";
 import { OpsIndicators, OpsRecordList, OpsSectionTabs } from "./OpsShared.jsx";
 
-export function DashboardPendientes({ records }) {
+export function DashboardPendientes({ records, timeLabel = "Total histórico" }) {
   const [activeTab, setActiveTab] = useState("ot");
   const data = useMemo(() => buildOperationalControlData(records), [records]);
   const tabs = [
@@ -15,7 +15,7 @@ export function DashboardPendientes({ records }) {
   return (
     <>
       <p className="source-note">
-        Control operativo diario desde ORDENES DE TRABAJO TYC y Matriz de Seguimiento. Usa únicamente datos ya sincronizados.
+        Control operativo diario desde ORDENES DE TRABAJO TYC y Matriz de Seguimiento. Periodo: {timeLabel}.
       </p>
       <OpsIndicators indicators={data.indicators} />
       <OpsSectionTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />

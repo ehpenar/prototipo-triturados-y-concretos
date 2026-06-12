@@ -513,6 +513,73 @@ textarea {
   white-space: pre-wrap;
 }
 
+.dashboard-ops-time-filter {
+  display: grid;
+  gap: 12px;
+}
+
+.dashboard-ops-time-filter h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.ops-title-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ops-help-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: help;
+  flex-shrink: 0;
+}
+
+.ops-help-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  width: min(280px, 70vw);
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 400;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 20;
+}
+
+.ops-help-trigger:hover .ops-help-tooltip,
+.ops-help-trigger:focus .ops-help-tooltip,
+.ops-help-trigger:focus-within .ops-help-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.dashboard-source-card small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .source-note,
 .dashboard-source-card {
   color: var(--muted);

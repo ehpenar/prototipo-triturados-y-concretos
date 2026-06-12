@@ -3,7 +3,7 @@ import { buildIntegralBitacora, listAvailableOts } from "../../utils/dashboardOp
 import { EmptyState } from "../EmptyState.jsx";
 import { OpsBitacoraSection } from "./OpsShared.jsx";
 
-export function BitacoraOT({ records }) {
+export function BitacoraOT({ records, timeLabel = "Total histórico" }) {
   const availableOts = useMemo(() => listAvailableOts(records), [records]);
   const [selectedOt, setSelectedOt] = useState("");
   const activeOt = selectedOt || availableOts[0] || "";
@@ -23,7 +23,7 @@ export function BitacoraOT({ records }) {
   return (
     <>
       <p className="source-note">
-        Vista consolidada de trazabilidad: creación, seguimiento, compras, ejecución y cierre de la OT seleccionada.
+        Vista consolidada de trazabilidad: creación, seguimiento, compras, ejecución y cierre de la OT seleccionada. Periodo: {timeLabel}.
       </p>
       <label className="dashboard-ops-select">
         OT

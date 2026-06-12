@@ -3,7 +3,7 @@ import { buildOperationalControlData } from "../../utils/dashboardOperations.js"
 import { EmptyState } from "../EmptyState.jsx";
 import { OpsIndicators, OpsRecordList, OpsSectionTabs } from "./OpsShared.jsx";
 
-export function ValidacionDatos({ records }) {
+export function ValidacionDatos({ records, timeLabel = "Total histórico" }) {
   const [activeTab, setActiveTab] = useState("all");
   const data = useMemo(() => buildOperationalControlData(records), [records]);
   const otIssues = data.validations.filter((issue) => issue.entityType === "OT");
@@ -32,7 +32,7 @@ export function ValidacionDatos({ records }) {
   return (
     <>
       <p className="source-note">
-        Validación automática de OT y SP, combinando reglas en memoria y la hoja validation_issues cuando existe.
+        Validación automática de OT y SP, combinando reglas en memoria y la hoja validation_issues cuando existe. Periodo: {timeLabel}.
       </p>
       <OpsIndicators indicators={data.indicators.filter((item) => ["ot-incomplete", "sp-incomplete", "duplicates"].includes(item.id))} />
       <OpsSectionTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />

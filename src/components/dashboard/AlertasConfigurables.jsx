@@ -3,7 +3,7 @@ import { buildOperationalControlData, parseAlertRules } from "../../utils/dashbo
 import { EmptyState } from "../EmptyState.jsx";
 import { OpsIndicators, OpsRecordList } from "./OpsShared.jsx";
 
-export function AlertasConfigurables({ records }) {
+export function AlertasConfigurables({ records, timeLabel = "Total histórico" }) {
   const data = useMemo(() => buildOperationalControlData(records), [records]);
   const rules = useMemo(() => parseAlertRules(records), [records]);
   const activeRules = rules.filter((rule) => rule.active !== false);
@@ -23,7 +23,7 @@ export function AlertasConfigurables({ records }) {
   return (
     <>
       <p className="source-note">
-        Alertas automáticas por condiciones operativas, reglas en alert_rules e historial en alert_history.
+        Alertas automáticas por condiciones operativas, reglas en alert_rules e historial en alert_history. Periodo: {timeLabel}.
       </p>
       <OpsIndicators indicators={data.indicators.filter((item) => item.id === "alerts-critical")} />
       {activeRules.length > 0 && (

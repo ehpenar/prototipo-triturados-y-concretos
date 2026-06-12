@@ -1,5 +1,15 @@
 import React from "react";
 
+export function OpsHelpTrigger({ text }) {
+  if (!text) return null;
+  return (
+    <span className="ops-help-trigger" tabIndex={0} aria-label={text}>
+      ?
+      <span className="ops-help-tooltip" role="tooltip">{text}</span>
+    </span>
+  );
+}
+
 export function OpsIndicators({ indicators }) {
   if (!indicators?.length) return null;
   return (

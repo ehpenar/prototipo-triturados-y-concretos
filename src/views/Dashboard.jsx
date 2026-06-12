@@ -1,7 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { Suspense, lazy, useMemo, useState } from "react";
 import { sum, cleanKey, formatMoney, normalizeText, parseMoney } from "../utils/helpers.js";
 import { trendPoints } from "../utils/analysis.js";
 import { EmptyState } from "../components/EmptyState.jsx";
+
+const DashboardOperaciones = lazy(() =>
+  import("../components/dashboard/DashboardOperaciones.jsx").then((module) => ({ default: module.DashboardOperaciones })),
+);
 
 const WORK_ORDERS_SPREADSHEET_ID = "1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns";
 const WORK_ORDERS_SHEET_ID = "1862269386";
@@ -62,7 +66,7 @@ const KPI_TIME_FILTER_OPTIONS = [
   { value: "month-11", label: "Diciembre" },
 ];
 
-export function Dashboard({ documents, records, alerts, rankingMode, setRankingMode, runAnalysis }) {
+export function Dashboard({ documents, records, sourceRecords, alerts, rankingMode, setRankingMode, runAnalysis }) {
   const [kpiTimeFilter, setKpiTimeFilter] = useState("all");
   const [kpiYearFilter, setKpiYearFilter] = useState(() => new Date().getFullYear());
   const isMonthFilter = getKpiMonthMatch(kpiTimeFilter) !== null;
@@ -81,6 +85,7 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
     trend: trendPoints(records),
     workOrderRows: countWorkOrderRows(records),
   }), [records, timeFilteredRecords]);
+  const operationalRecords = sourceRecords || records;
 
   return (
     <section className="view active">
@@ -161,6 +166,9 @@ export function Dashboard({ documents, records, alerts, rankingMode, setRankingM
         <SourceNote text={TREND_SOURCE_DETAIL} />
         <TrendChart points={dashboardMetrics.trend} />
       </section>
+      <Suspense fallback={<section className="panel"><p className="muted">Cargando herramientas operativas...</p></section>}>
+        <DashboardOperaciones records={operationalRecords} />
+      </Suspense>
     </section>
   );
 }

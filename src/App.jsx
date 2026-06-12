@@ -780,6 +780,7 @@ function App() {
             <Dashboard
               documents={documents}
               records={filteredRecords}
+              sourceRecords={records}
               alerts={alerts}
               rankingMode={rankingMode}
               setRankingMode={setRankingMode}

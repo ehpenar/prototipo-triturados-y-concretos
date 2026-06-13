@@ -1,5 +1,11 @@
-import { parseDate } from "./helpers.js";
+import { parseDate, normalizeText } from "./helpers.js";
 import { getCell } from "./dashboardOperations.js";
+
+const ACTIVITY_DATE_FIELDS = [
+  "Marca temporal",
+  "FECHA REPORTE",
+  "FECHA",
+];
 
 export const OPS_TIME_FILTER_OPTIONS = [
   { value: "all", label: "Total histórico" },
@@ -26,6 +32,7 @@ export const OPS_TIME_FILTER_OPTIONS = [
 
 const OPERATIONAL_DATE_FIELDS = [
   "Marca temporal",
+  "FECHA REPORTE",
   "FECHA DE SOLICITUD",
   "FECHA DE ENTREGA",
   "FECHA REAL ENTREGA",
@@ -76,7 +83,29 @@ export function getOpsTimeFilterLabel(filter, selectedYear) {
   return monthMatch !== null ? `${option.label} ${selectedYear}` : option.label;
 }
 
+export function formatOpsPeriodDetail(filter, selectedYear, now = new Date()) {
+  const label = getOpsTimeFilterLabel(filter, selectedYear);
+  if (filter === "all") return label;
+  const monthMatch = getOpsMonthMatch(filter);
+  if (filter === "today") return `${label} · ${formatOpsDateLabel(now)}`;
+  if (monthMatch !== null) {
+    const start = new Date(selectedYear, monthMatch, 1);
+    const end = new Date(selectedYear, monthMatch + 1, 0);
+    return `${label} · ${formatOpsDateLabel(start)} – ${formatOpsDateLabel(end)}`;
+  }
+  const range = getOpsDateRange(filter, now);
+  if (range) return `${label} · ${formatOpsDateLabel(range.start)} – ${formatOpsDateLabel(range.end)}`;
+  return label;
+}
+
 export function getOperationalRecordDate(record) {
+  if (isActivityTimeRecord(record)) {
+    for (const field of ACTIVITY_DATE_FIELDS) {
+      const parsed = parseDate(getCell(record, [field]));
+      if (parsed) return parsed;
+    }
+    return null;
+  }
   if (record?.normalized?.dateValue instanceof Date && !Number.isNaN(record.normalized.dateValue.getTime())) {
     return record.normalized.dateValue;
   }
@@ -85,6 +114,17 @@ export function getOperationalRecordDate(record) {
     if (parsed) return parsed;
   }
   return null;
+}
+
+function isActivityTimeRecord(record) {
+  const isActivitiesSource = normalizeText(record?.sourceName).includes(normalizeText("Reporte de Actividades Mantenimiento"));
+  if (!isActivitiesSource) return false;
+  const sheetName = normalizeText(record?.sheetName || "");
+  return sheetName.includes(normalizeText("FACTURACION")) || sheetName.includes(normalizeText("respuestas de formulario 1"));
+}
+
+function formatOpsDateLabel(date) {
+  return date.toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function getOpsDateRange(filter, now) {

@@ -279,6 +279,13 @@ textarea {
   flex-wrap: wrap;
 }
 
+.dashboard-ranking-head-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .dashboard-kpi-filter label {
   display: grid;
   gap: 6px;
@@ -358,6 +365,7 @@ textarea {
 .dashboard-ops-panel {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .dashboard-ops-nav {
@@ -381,6 +389,7 @@ textarea {
 .dashboard-ops-section {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .dashboard-ops-metrics {
@@ -544,6 +553,40 @@ textarea {
 .dashboard-ops-time-filter h3 {
   margin: 0;
   font-size: 15px;
+}
+
+.dashboard-ops-local-filters {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.dashboard-ops-local-filters h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.dashboard-ops-local-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.dashboard-ops-local-filter-grid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.dashboard-ops-local-filter-grid select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .ops-title-with-help {

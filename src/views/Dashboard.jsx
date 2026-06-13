@@ -10,6 +10,7 @@ import {
   getOpsMonthMatch,
   getOpsTimeFilterLabel,
   getStartOfCalendarWeek,
+  formatOpsPeriodDetail,
 } from "../utils/opsTimeFilter.js";
 
 const DashboardOperaciones = lazy(() =>
@@ -37,8 +38,8 @@ const RANKING_SOURCE_DETAILS = {
   },
   equipment: {
     label: "Ranking por equipos",
-    description: "Agrupa registros por equipo detectado en las hojas sincronizadas y suma los costos/horas relacionados por OT cuando existen.",
-    columns: "EQUIPO, MAQUINA, MÁQUINA, ACTIVO, OT",
+    description: "Agrupa actividades de mantenimiento por equipo intervenido. Usa FACTURACION (EQUIPO INTERVENIDO, VALOR DE LA ACTIVIDAD) y Respuestas de formulario 1 (columnas EQUIPO por proceso).",
+    columns: "EQUIPO INTERVENIDO, EQUIPO PRODUCCION, EQUIPO OBRAS, EQUIPO LOGISTICA, EQUIPO MANTENIMIENTO, DESCRIPCION DEL EQUIPO INTERVENIDO, TIEMPO DE LA ACTIVIDAD, VALOR DE LA ACTIVIDAD",
   },
   people: {
     label: "Ranking por técnicos",
@@ -107,8 +108,12 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
   const [trendMode, setTrendMode] = useState("ots");
   const [alertsTimeFilter, setAlertsTimeFilter] = useState("all");
   const [alertsYearFilter, setAlertsYearFilter] = useState(() => new Date().getFullYear());
+  const [rankingTimeFilter, setRankingTimeFilter] = useState("all");
+  const [rankingYearFilter, setRankingYearFilter] = useState(() => new Date().getFullYear());
   const isMonthFilter = getKpiMonthMatch(kpiTimeFilter) !== null;
   const isAlertsMonthFilter = getOpsMonthMatch(alertsTimeFilter) !== null;
+  const isRankingMonthFilter = getOpsMonthMatch(rankingTimeFilter) !== null;
+  const operationalRecords = sourceRecords || records;
   const availableYears = useMemo(() => buildAvailableYears(records), [records]);
   const timeFilteredRecords = useMemo(
     () => filterRecordsByKpiTimeRange(records, kpiTimeFilter, kpiYearFilter),
@@ -120,17 +125,22 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
     () => buildDashboardMetrics(records, timeFilteredRecords),
     [records, timeFilteredRecords],
   );
-  const otMetrics = useMemo(() => buildOtMetrics(records), [records]);
+  const rankingAvailableYears = useMemo(() => buildOpsAvailableYears(operationalRecords), [operationalRecords]);
+  const rankingFilteredRecords = useMemo(
+    () => filterRecordsByOpsTimeRange(operationalRecords, rankingTimeFilter, rankingYearFilter),
+    [operationalRecords, rankingTimeFilter, rankingYearFilter],
+  );
+  const rankingTimeLabel = formatOpsPeriodDetail(rankingTimeFilter, rankingYearFilter);
+  const otMetrics = useMemo(() => buildOtMetrics(rankingFilteredRecords), [rankingFilteredRecords]);
   const rankingsByMode = useMemo(
     () => ({
-      cost: buildOperationalRanking(records, "cost", otMetrics),
-      equipment: buildOperationalRanking(records, "equipment", otMetrics),
-      people: buildOperationalRanking(records, "people", otMetrics),
-      providers: buildOperationalRanking(records, "providers", otMetrics),
+      cost: buildOperationalRanking(rankingFilteredRecords, "cost", otMetrics),
+      equipment: buildOperationalRanking(rankingFilteredRecords, "equipment", otMetrics),
+      people: buildOperationalRanking(rankingFilteredRecords, "people", otMetrics),
+      providers: buildOperationalRanking(rankingFilteredRecords, "providers", otMetrics),
     }),
-    [records, otMetrics],
+    [rankingFilteredRecords, otMetrics],
   );
-  const operationalRecords = sourceRecords || records;
   const alertsAvailableYears = useMemo(() => buildOpsAvailableYears(operationalRecords), [operationalRecords]);
   const alertsFilteredRecords = useMemo(
     () => filterRecordsByOpsTimeRange(operationalRecords, alertsTimeFilter, alertsYearFilter),
@@ -228,14 +238,41 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
         <section className="panel">
           <div className="panel-head">
             <h2>Rankings dinamicos</h2>
-            <select value={rankingMode} onChange={(event) => setRankingMode(event.target.value)}>
-              <option value="cost">Costos</option>
-              <option value="equipment">Equipos</option>
-              <option value="people">Tecnicos</option>
-              <option value="providers">Proveedores</option>
-            </select>
+            <div className="dashboard-ranking-head-controls">
+              <span className="muted">Top 10 · {rankingTimeLabel}</span>
+              <select value={rankingMode} onChange={(event) => setRankingMode(event.target.value)}>
+                <option value="cost">Costos</option>
+                <option value="equipment">Equipos</option>
+                <option value="people">Tecnicos</option>
+                <option value="providers">Proveedores</option>
+              </select>
+            </div>
           </div>
-          <Rankings ranking={rankingsByMode[rankingMode] || []} mode={rankingMode} />
+          <div className="dashboard-kpi-filter-controls dashboard-alerts-filter">
+            <label>
+              Periodo
+              <select value={rankingTimeFilter} onChange={(event) => setRankingTimeFilter(event.target.value)}>
+                {OPS_TIME_FILTER_OPTIONS.map((option) => (
+                  <option key={`ranking-time-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {isRankingMonthFilter && (
+              <label>
+                Año
+                <select value={rankingYearFilter} onChange={(event) => setRankingYearFilter(Number(event.target.value))}>
+                  {rankingAvailableYears.map((year) => (
+                    <option key={`ranking-year-${year}`} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <Rankings ranking={rankingsByMode[rankingMode] || []} mode={rankingMode} periodLabel={rankingTimeLabel} />
         </section>
       </div>
       <section className="panel">
@@ -602,20 +639,20 @@ function Alerts({ alerts }) {
   );
 }
 
-function Rankings({ ranking, mode }) {
+function Rankings({ ranking, mode, periodLabel = "" }) {
   const sourceDetail = RANKING_SOURCE_DETAILS[mode] || RANKING_SOURCE_DETAILS.cost;
 
   if (!ranking.length) {
     return (
       <>
-        <RankingSourceCard sourceDetail={sourceDetail} />
+        <RankingSourceCard sourceDetail={sourceDetail} periodLabel={periodLabel} />
         <EmptyState />
       </>
     );
   }
   return (
     <>
-      <RankingSourceCard sourceDetail={sourceDetail} />
+      <RankingSourceCard sourceDetail={sourceDetail} periodLabel={periodLabel} />
       <div className="list dashboard-scroll-list">
         {ranking.map((item) => (
           <article className="item" key={`ranking-${mode}-${item.key}`}>
@@ -623,6 +660,7 @@ function Rankings({ ranking, mode }) {
             <small>
               {item.detail || `${item.count} registros · ${formatMoney(item.cost)} · ${item.hours.toFixed(1)} horas`}
             </small>
+            {item.dateLabel && <small className="muted">{item.dateLabel}</small>}
             <small className="source-detail">{item.sourceDetail}</small>
           </article>
         ))}
@@ -631,10 +669,11 @@ function Rankings({ ranking, mode }) {
   );
 }
 
-function RankingSourceCard({ sourceDetail }) {
+function RankingSourceCard({ sourceDetail, periodLabel }) {
   return (
     <div className="dashboard-source-card">
       <strong>{sourceDetail.label}</strong>
+      {periodLabel && <span className="muted">Periodo: {periodLabel}</span>}
       <span>{sourceDetail.description}</span>
       <small>Columnas buscadas: {sourceDetail.columns}</small>
     </div>
@@ -646,7 +685,7 @@ function buildOperationalRanking(records, mode, otMetrics = null) {
   const getOtMetrics = () => metrics;
   const rankingBuilders = {
     cost: () => rankOtsByCost(getOtMetrics(), records),
-    equipment: () => rankEquipmentByCost(getOtMetrics(), records),
+    equipment: () => rankEquipmentByActivity(records),
     people: () => rankPeopleByActivity(records),
     providers: () => rankProvidersByPurchases(records),
   };
@@ -664,7 +703,7 @@ function buildOtMetrics(records) {
     const metric = getOrCreateMetric(metrics, key, ot);
     metric.count += 1;
 
-    const equipment = getRecordEquipment(record);
+    const equipment = getActivityEquipment(record);
     if (equipment) metric.equipment = equipment;
 
     if (isMatrixRecord(record)) {
@@ -710,28 +749,124 @@ function rankOtsByCost(otMetrics, records) {
   return ranking.length ? ranking : buildGenericRanking(records, "cost");
 }
 
-function rankEquipmentByCost(otMetrics, records) {
+function rankEquipmentByActivity(records) {
+  const formEquipmentByKey = new Map();
+  const mergedActivities = new Map();
+
+  records.filter(isActivityFormRecord).forEach((record) => {
+    const key = buildActivityMatchKey(record);
+    const equipment = getActivityEquipment(record);
+    if (equipment && !isPlaceholderEquipment(equipment)) {
+      formEquipmentByKey.set(key, equipment);
+    }
+  });
+
+  records.filter(isBillingRecord).forEach((record) => {
+    upsertMergedActivity(mergedActivities, record, resolveActivityEquipment(record, formEquipmentByKey));
+  });
+
+  records.filter(isActivityFormRecord).forEach((record) => {
+    upsertMergedActivity(mergedActivities, record, resolveActivityEquipment(record, formEquipmentByKey));
+  });
+
   const byEquipment = new Map();
-  otMetrics.forEach((metric) => {
-    const key = cleanKey(metric.equipment);
-    if (!key) return;
-    const current = byEquipment.get(key) || { key, count: 0, cost: 0, hours: 0, ots: new Set() };
-    current.count += metric.count;
-    current.cost += metric.cost;
-    current.hours += metric.hours;
-    current.ots.add(metric.ot);
+  mergedActivities.forEach((activity) => {
+    const equipment = activity.equipment;
+    const key = cleanKey(equipment);
+    if (!key || isPlaceholderEquipment(equipment)) return;
+
+    const current = byEquipment.get(key) || {
+      key: String(equipment).trim(),
+      count: 0,
+      cost: 0,
+      hours: 0,
+      ots: new Set(),
+      dates: [],
+    };
+    current.count += 1;
+    current.cost += activity.cost;
+    current.hours += activity.hours;
+    activity.ots.forEach((otKey) => current.ots.add(otKey));
+    activity.dates.forEach((date) => current.dates.push(date));
     byEquipment.set(key, current);
   });
+
   const ranking = [...byEquipment.values()]
-    .filter((item) => item.cost || item.count)
+    .filter((item) => item.cost > 0 || item.hours > 0 || item.count > 0)
     .map((item) => ({
       ...item,
-      detail: `${item.ots.size} OT · ${formatMoney(item.cost)} · ${item.hours.toFixed(1)} horas · ${item.count} registros`,
-      sourceDetail: "Origen: registros con columnas de equipo (EQUIPO, MAQUINA, MÁQUINA o ACTIVO), cruzados por OT cuando existe.",
+      detail: `${item.count} actividades · ${formatMoney(item.cost)} · ${item.hours.toFixed(1)} horas · ${item.ots.size} OT`,
+      dateLabel: formatRankingDateRange(item.dates),
+      sourceDetail: "Origen: REPORTE DE ACTIVIDADES MANTENIMIENTO / FACTURACION y Respuestas de formulario 1.",
     }))
-    .sort((a, b) => (b.cost || b.count) - (a.cost || a.count))
+    .sort((left, right) => (right.cost || right.hours || right.count) - (left.cost || left.hours || left.count))
     .slice(0, 10);
+
   return ranking.length ? ranking : buildGenericRanking(records, "equipment");
+}
+
+function upsertMergedActivity(target, record, equipment) {
+  if (!equipment || isPlaceholderEquipment(equipment)) return;
+
+  const key = buildActivityMatchKey(record);
+  const hours = parseHours(getCell(record, ["TIEMPO DE LA ACTIVIDAD", "HORAS", "HH"]) || record.normalized.hoursNumber);
+  const cost = getActivityLaborCost(record);
+  const ot = getRecordOt(record);
+  const date = getActivityRecordDate(record);
+  const existing = target.get(key) || {
+    equipment: "",
+    hours: 0,
+    cost: 0,
+    ots: new Set(),
+    dates: [],
+  };
+
+  existing.equipment = equipment;
+  existing.hours = Math.max(existing.hours, hours);
+  existing.cost = Math.max(existing.cost, cost);
+  if (ot) existing.ots.add(normalizeOtKey(ot));
+  if (date) existing.dates.push(date);
+  target.set(key, existing);
+}
+
+function resolveActivityEquipment(record, formEquipmentByKey) {
+  const directEquipment = getActivityEquipment(record);
+  if (directEquipment && !isPlaceholderEquipment(directEquipment)) return directEquipment;
+  return formEquipmentByKey.get(buildActivityMatchKey(record)) || "";
+}
+
+function buildActivityMatchKey(record) {
+  const stamp = String(getCell(record, ["FECHA REPORTE", "Marca temporal", "FECHA"]) || "").trim();
+  const collaborator = cleanKey(getCell(record, ["COLABORADOR", "colaborador", "TECNICO", "TÉCNICO"]));
+  const time = normalizeActivityTimeKey(getCell(record, ["TIEMPO DE LA ACTIVIDAD", "HORAS", "HH"]) || record.normalized.hoursNumber);
+  const base = `${stamp}|${collaborator}|${time}`;
+  return base.replace(/\|/g, "") ? base : (record.uid || record.id || base);
+}
+
+function normalizeActivityTimeKey(value) {
+  const hours = parseHours(value);
+  return hours > 0 ? hours.toFixed(4) : String(value || "").trim();
+}
+
+function getActivityRecordDate(record) {
+  return (
+    parseDate(getCell(record, ["Marca temporal"]))
+    || parseDate(getCell(record, ["FECHA REPORTE"]))
+    || parseDate(getCell(record, ["FECHA"]))
+    || null
+  );
+}
+
+function formatRankingDateRange(dates) {
+  const validDates = (dates || []).filter((date) => date instanceof Date && !Number.isNaN(date.getTime())).sort((left, right) => left - right);
+  if (!validDates.length) return "";
+  const first = formatRankingDateLabel(validDates[0]);
+  const last = formatRankingDateLabel(validDates[validDates.length - 1]);
+  return first === last ? `Fecha actividad: ${first}` : `Fechas actividad: ${first} – ${last}`;
+}
+
+function formatRankingDateLabel(date) {
+  return date.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 function rankPeopleByActivity(records) {
@@ -743,7 +878,7 @@ function rankPeopleByActivity(records) {
     const current = people.get(key) || { key, count: 0, cost: 0, hours: 0, ots: new Set() };
     current.count += 1;
     current.hours += parseHours(getCell(record, ["TIEMPO DE LA ACTIVIDAD", "HORAS", "HH"]) || record.normalized.hoursNumber);
-    current.cost += Number(record.normalized.costNumber) || 0;
+    current.cost += getActivityLaborCost(record) || Number(record.normalized.costNumber) || 0;
     const ot = getRecordOt(record);
     if (ot) current.ots.add(normalizeOtKey(ot));
     people.set(key, current);
@@ -829,11 +964,79 @@ function getOrCreateMetric(metrics, key, ot) {
 }
 
 function getRecordOt(record) {
-  return normalizeOt(getCell(record, ["OT", "5", "ORDEN DE TRABAJO", "ORDEN TRABAJO"]) || record.normalized?.work_order);
+  return normalizeOt(
+    getCell(record, [
+      "OT",
+      "5",
+      "ORDEN DE TRABAJO",
+      "ORDEN TRABAJO",
+      "OT - REPORTE DE CAMPO",
+      "ORDEN DE TRABAJO/REPORTE DE CAMPO",
+    ]) || record.normalized?.work_order,
+  );
 }
 
 function getRecordEquipment(record) {
-  return getCell(record, ["EQUIPO", "MAQUINA", "MÁQUINA", "ACTIVO"]) || record.normalized?.equipment || "";
+  return getActivityEquipment(record);
+}
+
+function getActivityEquipment(record) {
+  const billingEquipment = getCell(record, ["EQUIPO INTERVENIDO"], ["equipo intervenido"]);
+  if (billingEquipment && !isPlaceholderEquipment(billingEquipment)) return billingEquipment;
+
+  const equipmentColumns = [
+    "EQUIPO PRODUCCION",
+    "EQUIPO OBRAS",
+    "EQUIPO LOGISTICA",
+    "EQUIPO MANTENIMIENTO",
+    "EQUIPO ALQUILADO",
+    "DESCRIPCION DEL EQUIPO INTERVENIDO",
+    "DESCRIPCION DEL EQUIPO ALQUILADO",
+    "OTRO EQUIPO",
+    "EQUIPO",
+    "MAQUINA",
+    "MÁQUINA",
+    "ACTIVO",
+  ];
+  for (const column of equipmentColumns) {
+    const value = String(getCell(record, [column]) || "").trim();
+    if (value && !isPlaceholderEquipment(value)) return value;
+  }
+
+  const normalizedEquipment = String(record.normalized?.equipment || "").trim();
+  return normalizedEquipment && !isPlaceholderEquipment(normalizedEquipment) ? normalizedEquipment : "";
+}
+
+function getActivityLaborCost(record) {
+  return parseMoney(getCell(record, [
+    "VALOR DE LA ACTIVIDAD",
+    "VALOR DE LA ACTIVIDAD ",
+    "Costo Total",
+    "COSTO TOTAL",
+    "VALOR TOTAL",
+    "TOTAL",
+  ]));
+}
+
+function isPlaceholderEquipment(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return true;
+  if (raw.startsWith("#")) return true;
+  const text = normalizeText(raw);
+  return !text || text === "na" || text === "n/a" || text === "n-a" || text === "n a";
+}
+
+function isEquipmentActivityRecord(record) {
+  return isBillingRecord(record) || isActivityFormRecord(record);
+}
+
+function isActivityFormRecord(record) {
+  if (!sourceIncludes(record, "Reporte de Actividades Mantenimiento")) return false;
+  if (normalizeText(record.sheetName) === normalizeText("FACTURACION")) return false;
+  if (!sheetIncludes(record, "respuestas de formulario 1")) return false;
+  const hasCollaborator = record.headers?.some((header) => normalizeText(header) === normalizeText("COLABORADOR"));
+  const hasActivityTime = record.headers?.some((header) => normalizeText(header).includes(normalizeText("tiempo de la actividad")));
+  return hasCollaborator && hasActivityTime;
 }
 
 function getMatrixPurchaseValue(record) {
@@ -854,11 +1057,18 @@ function getBillingCostValue(record) {
   ]) || record.normalized.costNumber);
 }
 
-function getCell(record, names) {
+function getCell(record, names, containsNames = []) {
   if (!record) return "";
   for (const name of names) {
     const header = record.headers?.find((item) => normalizeHeader(item) === normalizeHeader(name));
-    if (header && record.cells?.[header] !== undefined) return record.cells[header];
+    const value = header ? record.cells?.[header] : "";
+    if (header && value !== undefined && String(value || "").trim()) return value;
+  }
+  for (const name of containsNames) {
+    const target = normalizeHeader(name);
+    const header = record.headers?.find((item) => normalizeHeader(item).includes(target));
+    const value = header ? record.cells?.[header] : "";
+    if (header && value !== undefined && String(value || "").trim()) return value;
   }
   return "";
 }
@@ -878,7 +1088,16 @@ function normalizeOtKey(value) {
 }
 
 function parseHours(value) {
-  return parseFloat(String(value || "").replace(",", ".")) || 0;
+  if (!value) return 0;
+  if (value instanceof Date) return value.getHours() + value.getMinutes() / 60 + value.getSeconds() / 3600;
+  if (typeof value === "number") return value >= 0 && value <= 1 ? value * 24 : value;
+  const text = String(value || "").trim().replace(",", ".");
+  if (!text) return 0;
+  if (text.includes(":")) {
+    const [hours = 0, minutes = 0, seconds = 0] = text.split(":").map((part) => Number(part) || 0);
+    return hours + minutes / 60 + seconds / 3600;
+  }
+  return Number(text) || 0;
 }
 
 function sourceIncludes(record, sourceName) {

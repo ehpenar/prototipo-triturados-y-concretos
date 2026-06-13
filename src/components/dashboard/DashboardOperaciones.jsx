@@ -22,6 +22,9 @@ const BitacoraOT = lazy(() =>
 const AlertasConfigurables = lazy(() =>
   import("./AlertasConfigurables.jsx").then((module) => ({ default: module.AlertasConfigurables })),
 );
+const DashboardSeguimiento = lazy(() =>
+  import("./DashboardSeguimiento.jsx").then((module) => ({ default: module.DashboardSeguimiento })),
+);
 
 const OPERATIONS_SECTIONS = [
   {
@@ -52,6 +55,13 @@ const OPERATIONS_SECTIONS = [
     helpText: "Permite definir y consultar reglas para detectar situaciones críticas: OT o SP abiertas más de X días, compras que superen un valor, información incompleta y falta de actividad reciente.",
     Component: AlertasConfigurables,
   },
+  {
+    id: "seguimiento",
+    title: "Actividades de mantenimiento",
+    description: "Consulta actividades desde FACTURACION y Respuestas de formulario 1 con filtros por equipo, personal y proceso.",
+    helpText: "Unifica actividades del REPORTE DE ACTIVIDADES MANTENIMIENTO: horas, valor de actividad, OT, colaborador y equipo. Cruza FACTURACION con el formulario de campo sin duplicar registros.",
+    Component: DashboardSeguimiento,
+  },
 ];
 
 export function DashboardOperaciones({ records }) {
@@ -65,8 +75,16 @@ export function DashboardOperaciones({ records }) {
     [records, opsTimeFilter, opsYearFilter],
   );
   const selectedTimeLabel = getOpsTimeFilterLabel(opsTimeFilter, opsYearFilter);
-  const operationalData = useMemo(() => buildOperationalControlData(filteredRecords), [filteredRecords]);
-  const alertRules = useMemo(() => parseAlertRules(filteredRecords), [filteredRecords]);
+  const needsOperationalData = openSection === "pendientes" || openSection === "validacion";
+  const needsAlertRules = openSection === "alertas";
+  const operationalData = useMemo(
+    () => (needsOperationalData ? buildOperationalControlData(filteredRecords) : null),
+    [filteredRecords, needsOperationalData],
+  );
+  const alertRules = useMemo(
+    () => (needsAlertRules ? parseAlertRules(filteredRecords) : null),
+    [filteredRecords, needsAlertRules],
+  );
   const activeSection = OPERATIONS_SECTIONS.find((section) => section.id === openSection) || OPERATIONS_SECTIONS[0];
   const ActiveComponent = activeSection.Component;
 

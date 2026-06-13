@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from "react";
-import { buildOperationalControlData } from "../../utils/dashboardOperations.js";
+import React, { useState } from "react";
 import { EmptyState } from "../EmptyState.jsx";
 import { OpsIndicators, OpsRecordList, OpsSectionTabs } from "./OpsShared.jsx";
+import { useOperationalOpsData } from "./OperationalOpsContext.jsx";
 
 const OT_FILTER_IDS = new Set(["ot-open", "ot-overdue", "ot-sin-revisar", "ot-incomplete", "ot-closed"]);
 const SP_FILTER_IDS = new Set(["sp-open", "sp-sin-oc", "sp-incomplete"]);
@@ -9,7 +9,8 @@ const SP_FILTER_IDS = new Set(["sp-open", "sp-sin-oc", "sp-incomplete"]);
 export function DashboardPendientes({ records, timeLabel = "Total histórico" }) {
   const [activeTab, setActiveTab] = useState("ot");
   const [activeFilter, setActiveFilter] = useState(null);
-  const data = useMemo(() => buildOperationalControlData(records), [records]);
+  const data = useOperationalOpsData()?.data;
+  if (!data) return <p className="muted">Cargando panel de pendientes...</p>;
   const tabs = [
     { id: "ot", label: "Pendientes OT", count: data.otPending.length },
     { id: "sp", label: "Pendientes SP", count: data.spPending.length },

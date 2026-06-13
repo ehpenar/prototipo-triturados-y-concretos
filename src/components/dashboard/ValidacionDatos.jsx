@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from "react";
-import { buildOperationalControlData } from "../../utils/dashboardOperations.js";
+import React, { useState } from "react";
 import { EmptyState } from "../EmptyState.jsx";
 import { OpsIndicators, OpsRecordList, OpsSectionTabs } from "./OpsShared.jsx";
+import { useOperationalOpsData } from "./OperationalOpsContext.jsx";
 
 export function ValidacionDatos({ records, timeLabel = "Total histórico" }) {
   const [activeTab, setActiveTab] = useState("all");
-  const data = useMemo(() => buildOperationalControlData(records), [records]);
+  const data = useOperationalOpsData()?.data;
+  if (!data) return <p className="muted">Cargando validaciones...</p>;
   const otIssues = data.validations.filter((issue) => issue.entityType === "OT");
   const spIssues = data.validations.filter((issue) => issue.entityType === "SP");
   const tabs = [

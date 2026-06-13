@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useMemo, useState } from "react";
 import { sum, cleanKey, formatMoney, normalizeText, parseMoney } from "../utils/helpers.js";
-import { trendPoints } from "../utils/analysis.js";
 import { EmptyState } from "../components/EmptyState.jsx";
+import { useDeferredMount } from "../components/dashboard/useDeferredMount.js";
 
 const DashboardOperaciones = lazy(() =>
   import("../components/dashboard/DashboardOperaciones.jsx").then((module) => ({ default: module.DashboardOperaciones })),
@@ -77,15 +77,22 @@ export function Dashboard({ documents, records, sourceRecords, alerts, rankingMo
   );
   const selectedTimeFilter = KPI_TIME_FILTER_OPTIONS.find((option) => option.value === kpiTimeFilter) || KPI_TIME_FILTER_OPTIONS[0];
   const selectedTimeLabel = isMonthFilter ? `${selectedTimeFilter.label} ${kpiYearFilter}` : selectedTimeFilter.label;
-  const dashboardMetrics = useMemo(() => ({
-    totalCost: calculateDashboardDetectedCost(timeFilteredRecords),
-    totalHours: sum(timeFilteredRecords.map((record) => record.normalized.hoursNumber)),
-    totalLaborValue: calculateDashboardLaborValue(timeFilteredRecords),
-    equipmentCount: new Set(records.map((record) => cleanKey(record.normalized.equipment)).filter(Boolean)).size,
-    trend: trendPoints(records),
-    workOrderRows: countWorkOrderRows(records),
-  }), [records, timeFilteredRecords]);
+  const dashboardMetrics = useMemo(
+    () => buildDashboardMetrics(records, timeFilteredRecords),
+    [records, timeFilteredRecords],
+  );
+  const otMetrics = useMemo(() => buildOtMetrics(records), [records]);
+  const rankingsByMode = useMemo(
+    () => ({
+      cost: buildOperationalRanking(records, "cost", otMetrics),
+      equipment: buildOperationalRanking(records, "equipment", otMetrics),
+      people: buildOperationalRanking(records, "people", otMetrics),
+      providers: buildOperationalRanking(records, "providers", otMetrics),
+    }),
+    [records, otMetrics],
+  );
   const operationalRecords = sourceRecords || records;
+  const { isReady: showOperations, sentinelRef: operationsSentinelRef } = useDeferredMount();
 
   return (
     <section className="view active">
@@ -155,7 +162,7 @@ export function Dashboard({ documents, records, sourceRecords, alerts, rankingMo
               <option value="providers">Proveedores</option>
             </select>
           </div>
-          <Rankings records={records} mode={rankingMode} />
+          <Rankings ranking={rankingsByMode[rankingMode] || []} mode={rankingMode} />
         </section>
       </div>
       <section className="panel">
@@ -166,20 +173,66 @@ export function Dashboard({ documents, records, sourceRecords, alerts, rankingMo
         <SourceNote text={TREND_SOURCE_DETAIL} />
         <TrendChart points={dashboardMetrics.trend} />
       </section>
-      <Suspense fallback={<section className="panel"><p className="muted">Cargando herramientas operativas...</p></section>}>
-        <DashboardOperaciones records={operationalRecords} />
-      </Suspense>
+      <div ref={operationsSentinelRef} style={{ height: 1, width: "100%" }} aria-hidden="true" />
+      {showOperations ? (
+        <Suspense fallback={<section className="panel"><p className="muted">Cargando herramientas operativas...</p></section>}>
+          <DashboardOperaciones records={operationalRecords} />
+        </Suspense>
+      ) : (
+        <section className="panel">
+          <p className="muted">Las herramientas operativas se cargan al acercarte a esta sección.</p>
+        </section>
+      )}
     </section>
   );
 }
 
-function countWorkOrderRows(records) {
-  return records.filter((record) => {
-    if (!isWorkOrdersRecord(record)) return false;
-    const matchingHeader = record.headers.find((header) => normalizeText(header) === "ot");
-    const value = String(record.cells[matchingHeader] || "").trim();
-    return matchingHeader && /\d/.test(value);
-  }).length;
+function buildDashboardMetrics(allRecords, timeFilteredRecords) {
+  const equipmentKeys = new Set();
+  const trendByMonth = new Map();
+  let workOrderRows = 0;
+  let totalCost = 0;
+  let totalHours = 0;
+  let totalLaborValue = 0;
+
+  allRecords.forEach((record) => {
+    const equipment = cleanKey(record.normalized.equipment);
+    if (equipment) equipmentKeys.add(equipment);
+
+    if (isWorkOrdersRecord(record)) {
+      const matchingHeader = record.headers.find((header) => normalizeText(header) === "ot");
+      const value = String(record.cells[matchingHeader] || "").trim();
+      if (matchingHeader && /\d/.test(value)) workOrderRows += 1;
+    }
+
+    const date = record.normalized.dateValue;
+    if (date) {
+      const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const current = trendByMonth.get(month) || { month, value: 0, cost: 0 };
+      current.value += 1;
+      current.cost += record.normalized.costNumber || 0;
+      trendByMonth.set(month, current);
+    }
+  });
+
+  timeFilteredRecords.forEach((record) => {
+    if (isDashboardMatrixCostRecord(record)) totalCost += getMatrixPurchaseValue(record);
+    totalHours += record.normalized.hoursNumber || 0;
+    if (isDashboardBillingCostRecord(record)) totalLaborValue += getBillingCostValue(record);
+  });
+
+  const trend = [...trendByMonth.values()]
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .slice(-12);
+
+  return {
+    totalCost,
+    totalHours,
+    totalLaborValue,
+    equipmentCount: equipmentKeys.size,
+    trend,
+    workOrderRows,
+  };
 }
 
 function isWorkOrdersRecord(record) {
@@ -191,17 +244,6 @@ function isWorkOrdersRecord(record) {
     normalizeText(record.sheetName) === normalizeText(WORK_ORDERS_SHEET_NAME);
 
   return isTargetDocument && isTargetSheet;
-}
-
-function calculateDashboardDetectedCost(records) {
-  return sum(records.map((record) => {
-    if (isDashboardMatrixCostRecord(record)) return getMatrixPurchaseValue(record);
-    return 0;
-  }));
-}
-
-function calculateDashboardLaborValue(records) {
-  return sum(records.map((record) => (isDashboardBillingCostRecord(record) ? getBillingCostValue(record) : 0)));
 }
 
 function filterRecordsByKpiTimeRange(records, filter, selectedYear) {
@@ -276,8 +318,7 @@ function Alerts({ alerts }) {
   );
 }
 
-function Rankings({ records, mode }) {
-  const ranking = useMemo(() => buildOperationalRanking(records, mode), [records, mode]);
+function Rankings({ ranking, mode }) {
   const sourceDetail = RANKING_SOURCE_DETAILS[mode] || RANKING_SOURCE_DETAILS.cost;
 
   if (!ranking.length) {
@@ -316,12 +357,9 @@ function RankingSourceCard({ sourceDetail }) {
   );
 }
 
-function buildOperationalRanking(records, mode) {
-  let otMetrics = null;
-  const getOtMetrics = () => {
-    if (!otMetrics) otMetrics = buildOtMetrics(records);
-    return otMetrics;
-  };
+function buildOperationalRanking(records, mode, otMetrics = null) {
+  const metrics = otMetrics || buildOtMetrics(records);
+  const getOtMetrics = () => metrics;
   const rankingBuilders = {
     cost: () => rankOtsByCost(getOtMetrics(), records),
     equipment: () => rankEquipmentByCost(getOtMetrics(), records),

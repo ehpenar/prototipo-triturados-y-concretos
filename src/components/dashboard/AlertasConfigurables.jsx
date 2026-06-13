@@ -1,11 +1,13 @@
-import React, { useMemo } from "react";
-import { buildOperationalControlData, parseAlertRules } from "../../utils/dashboardOperations.js";
+import React from "react";
 import { EmptyState } from "../EmptyState.jsx";
 import { OpsIndicators, OpsRecordList } from "./OpsShared.jsx";
+import { useOperationalOpsData } from "./OperationalOpsContext.jsx";
 
 export function AlertasConfigurables({ records, timeLabel = "Total histórico" }) {
-  const data = useMemo(() => buildOperationalControlData(records), [records]);
-  const rules = useMemo(() => parseAlertRules(records), [records]);
+  const opsData = useOperationalOpsData();
+  const data = opsData?.data;
+  const rules = opsData?.rules || [];
+  if (!data) return <p className="muted">Cargando alertas...</p>;
   const activeRules = rules.filter((rule) => rule.active !== false);
   const listItems = data.alerts.map((alert) => ({
     id: alert.id || `${alert.entityType}-${alert.entityId}-${alert.detectedAt}`,

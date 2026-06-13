@@ -6,7 +6,9 @@ import {
   getOpsMonthMatch,
   getOpsTimeFilterLabel,
 } from "../../utils/opsTimeFilter.js";
+import { buildOperationalControlData, parseAlertRules } from "../../utils/dashboardOperations.js";
 import { OpsHelpTrigger } from "./OpsShared.jsx";
+import { OperationalOpsContext } from "./OperationalOpsContext.jsx";
 
 const DashboardPendientes = lazy(() =>
   import("./DashboardPendientes.jsx").then((module) => ({ default: module.DashboardPendientes })),
@@ -63,10 +65,13 @@ export function DashboardOperaciones({ records }) {
     [records, opsTimeFilter, opsYearFilter],
   );
   const selectedTimeLabel = getOpsTimeFilterLabel(opsTimeFilter, opsYearFilter);
+  const operationalData = useMemo(() => buildOperationalControlData(filteredRecords), [filteredRecords]);
+  const alertRules = useMemo(() => parseAlertRules(filteredRecords), [filteredRecords]);
   const activeSection = OPERATIONS_SECTIONS.find((section) => section.id === openSection) || OPERATIONS_SECTIONS[0];
   const ActiveComponent = activeSection.Component;
 
   return (
+    <OperationalOpsContext.Provider value={{ data: operationalData, rules: alertRules }}>
     <section className="panel dashboard-ops-panel">
       <div className="panel-head">
         <div>
@@ -137,5 +142,6 @@ export function DashboardOperaciones({ records }) {
         </Suspense>
       </section>
     </section>
+    </OperationalOpsContext.Provider>
   );
 }

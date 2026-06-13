@@ -34,7 +34,6 @@ import { useDebouncedValue } from "./hooks/useDebouncedValue.js";
 const Dashboard = lazy(() => import("./views/Dashboard.jsx").then((module) => ({ default: module.Dashboard })));
 const Records = lazy(() => import("./views/Records.jsx").then((module) => ({ default: module.Records })));
 const Relations = lazy(() => import("./views/Relations.jsx").then((module) => ({ default: module.Relations })));
-const Equipment = lazy(() => import("./views/Equipment.jsx").then((module) => ({ default: module.Equipment })));
 const Automation = lazy(() => import("./views/Automation.jsx").then((module) => ({ default: module.Automation })));
 const Reminders = lazy(() => import("./views/Reminders.jsx").then((module) => ({ default: module.Reminders })));
 const Reports = lazy(() => import("./views/Reports.jsx").then((module) => ({ default: module.Reports })));
@@ -123,7 +122,6 @@ function App() {
   });
   const [filters, setFilters] = useState({ document: "", sheet: "", type: "" });
   const [rankingMode, setRankingMode] = useState("cost");
-  const [equipmentSearch, setEquipmentSearch] = useState("");
   const [newSource, setNewSource] = useState({ name: "", url: "" });
   const [notes, setNotes] = useState(() => loadStored("operation_ai_notes", []));
   const [automations, setAutomations] = useState(() => loadStored("operation_ai_custom_automations", []));
@@ -149,7 +147,6 @@ function App() {
   const globalStatusStateRef = useRef(loadStored("operation_ai_global_status_state", {}));
   const globalOtChangeStateRef = useRef(loadStored(GLOBAL_OT_CHANGE_STATE_KEY, {}));
   const debouncedSearch = useDebouncedValue(search);
-  const debouncedEquipmentSearch = useDebouncedValue(equipmentSearch);
 
   const filteredRecords = useMemo(() => {
     const query = normalizeText(debouncedSearch);
@@ -788,15 +785,6 @@ function App() {
           )}
 
           {activeView === "relations" && <Relations relations={relations} />}
-
-          {activeView === "equipment" && (
-            <Equipment
-              relations={relations}
-              equipmentSearch={equipmentSearch}
-              debouncedEquipmentSearch={debouncedEquipmentSearch}
-              setEquipmentSearch={setEquipmentSearch}
-            />
-          )}
 
           {activeView === "automation" && (
             <Automation

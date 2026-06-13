@@ -10,15 +10,20 @@ export function OpsHelpTrigger({ text }) {
   );
 }
 
-export function OpsIndicators({ indicators }) {
+export function OpsIndicators({ indicators, activeFilterId, onFilterClick }) {
   if (!indicators?.length) return null;
   return (
     <div className="dashboard-ops-metrics dashboard-ops-metrics-wide">
       {indicators.map((item) => (
-        <article className={`dashboard-ops-metric ${item.critical ? "dashboard-ops-metric-critical" : ""}`} key={item.id}>
+        <button
+          type="button"
+          key={item.id}
+          className={`dashboard-ops-metric dashboard-ops-metric-button ${activeFilterId === item.id ? "active" : ""} ${item.critical ? "dashboard-ops-metric-critical" : ""}`}
+          onClick={() => onFilterClick?.(item.id)}
+        >
           <span>{item.label}</span>
           <strong>{item.value}</strong>
-        </article>
+        </button>
       ))}
     </div>
   );

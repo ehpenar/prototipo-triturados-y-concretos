@@ -110,10 +110,12 @@ export function buildOperationalControlData(sourceRecords, config = DEFAULT_OPS_
   const rules = parseAlertRules(sourceRecords);
   const alerts = buildAutomaticAlerts(sourceRecords, indexes, config, rules, otPending, spPending, validations, duplicates);
   const indicators = buildOperationalIndicators(indexes, otPending, spPending, validations, alerts, duplicates);
+  const indicatorFilters = buildIndicatorFilterLists(indexes, otPending, spPending, validations, alerts, duplicates);
 
   return {
     config,
     indicators,
+    indicatorFilters,
     otPending,
     spPending,
     validations,
@@ -235,6 +237,117 @@ function buildOperationalIndicators(indexes, otPending, spPending, validations, 
     { id: "alerts-critical", label: "Alertas críticas", value: criticalAlerts, critical: criticalAlerts > 0 },
     { id: "duplicates", label: "Duplicados", value: duplicateCount, critical: duplicateCount > 0 },
   ];
+}
+
+function buildIndicatorFilterLists(indexes, otPending, spPending, validations, alerts, duplicates) {
+  const otOpen = [...indexes.workOrderByOt.entries()]
+    .filter(([, record]) => !isClosedOtStatus(getCell(record, ["ESTADO"])))
+    .map(([otKey, record]) => buildOtListItem(record, otKey, ["OT abierta"]));
+
+  const otClosed = [...indexes.workOrderByOt.entries()]
+    .filter(([, record]) => isClosedOtStatus(getCell(record, ["ESTADO"])))
+    .map(([otKey, record]) => buildOtListItem(record, otKey, ["OT terminada o cerrada"]));
+
+  const otOverdue = otPending.filter((item) => item.reasons.some((reason) => reason.toLowerCase().includes("vencida")));
+
+  const otSinRevisar = otPending.filter((item) => normalizeText(item.subtitle) === "sinrevisar");
+
+  const otIncomplete = validations
+    .filter((issue) => issue.entityType === "OT")
+    .map(validationIssueToListItem);
+
+  const spSinOc = spPending.filter((item) => item.reasons.some((reason) => reason.toLowerCase().includes("orden de compra")));
+
+  const spIncomplete = validations
+    .filter((issue) => issue.entityType === "SP")
+    .map(validationIssueToListItem);
+
+  const criticalAlerts = alerts
+    .filter((alert) => alert.severity === "high")
+    .map(alertToListItem);
+
+  const duplicateItems = [
+    ...duplicates.ot.map((item) => duplicateToListItem("OT", item.key, item.count)),
+    ...duplicates.sp.map((item) => duplicateToListItem("SP", item.key, item.count)),
+  ];
+
+  return {
+    "ot-open": otOpen,
+    "ot-overdue": otOverdue,
+    "ot-sin-revisar": otSinRevisar,
+    "ot-incomplete": otIncomplete,
+    "ot-closed": otClosed,
+    "sp-open": spPending,
+    "sp-sin-oc": spSinOc,
+    "sp-incomplete": spIncomplete,
+    "alerts-critical": criticalAlerts,
+    duplicates: duplicateItems,
+  };
+}
+
+function buildOtListItem(record, otKey, reasons = []) {
+  const detail = extractWorkOrderDetail(record, otKey);
+  return {
+    id: `ot-filter-${otKey}`,
+    severity: "medium",
+    title: `OT ${detail.ot}`,
+    subtitle: detail.estado || "Sin estado",
+    reasons,
+    fields: [
+      { label: "Fecha solicitud", value: detail.fechaSolicitud },
+      { label: "Responsable", value: detail.responsable },
+      { label: "Área", value: detail.area },
+      { label: "Equipo / CC", value: detail.equipoCentroCosto },
+      { label: "Estado", value: detail.estado },
+      { label: "Días transcurridos", value: detail.diasTranscurridos },
+      { label: "Fecha compromiso", value: detail.fechaCompromiso },
+    ],
+    otKey,
+    record,
+  };
+}
+
+function validationIssueToListItem(issue) {
+  return {
+    id: issue.id || `${issue.entityType}-${issue.entityId}-${issue.fieldName}`,
+    severity: issue.severity || "medium",
+    title: `${issue.entityType} ${issue.entityId}`,
+    subtitle: issue.issueType,
+    reasons: [issue.issueMessage || "Incidencia detectada"],
+    fields: [
+      { label: "Campo", value: issue.fieldName || "—" },
+      { label: "Responsable", value: issue.responsible || "—" },
+      { label: "Fecha detección", value: issue.detectedAt || "—" },
+    ],
+  };
+}
+
+function alertToListItem(alert) {
+  return {
+    id: alert.id || `${alert.entityType}-${alert.entityId}-${alert.detectedAt}`,
+    severity: alert.severity || "high",
+    title: alert.entityName || `${alert.entityType} ${alert.entityId}`,
+    subtitle: alert.status || "open",
+    reasons: [alert.alertMessage],
+    fields: [
+      { label: "Entidad", value: `${alert.entityType || "—"} ${alert.entityId || ""}`.trim() },
+      { label: "Detectada", value: alert.detectedAt || "—" },
+    ],
+  };
+}
+
+function duplicateToListItem(entityType, key, count) {
+  return {
+    id: `duplicate-${entityType}-${key}`,
+    severity: "high",
+    title: `${entityType} ${key}`,
+    subtitle: "Registro duplicado",
+    reasons: [`${count} coincidencias detectadas`],
+    fields: [
+      { label: "Tipo", value: entityType },
+      { label: "Coincidencias", value: count },
+    ],
+  };
 }
 
 function collectOtPendingReasons(record, indexes, otKey, config) {

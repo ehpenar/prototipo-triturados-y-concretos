@@ -396,6 +396,29 @@ textarea {
   background: #f8fafc;
 }
 
+.dashboard-ops-metric-button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.dashboard-ops-metric-button:hover {
+  border-color: #0f766e;
+  background: #f4fbfa;
+}
+
+.dashboard-ops-metric-button.active {
+  border-color: #0f766e;
+  background: #ecfdf5;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.15);
+}
+
+.dashboard-ops-filter-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .dashboard-ops-metric span {
   display: block;
   color: var(--muted);

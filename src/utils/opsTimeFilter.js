@@ -8,6 +8,7 @@ export const OPS_TIME_FILTER_OPTIONS = [
   { value: "last-3-months", label: "Últimos 3 meses" },
   { value: "last-month", label: "Último mes" },
   { value: "last-week", label: "Última semana" },
+  { value: "this-week", label: "Esta semana" },
   { value: "today", label: "Hoy" },
   { value: "month-0", label: "Enero" },
   { value: "month-1", label: "Febrero" },
@@ -104,7 +105,16 @@ function getOpsDateRange(filter, now) {
   if (filter === "last-week") {
     return { start: startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6)), end: endOfDay(now) };
   }
+  if (filter === "this-week") {
+    return { start: getStartOfCalendarWeek(now), end: endOfDay(now) };
+  }
   return null;
+}
+
+export function getStartOfCalendarWeek(date) {
+  const day = date.getDay();
+  const daysFromMonday = day === 0 ? 6 : day - 1;
+  return startOfDay(new Date(date.getFullYear(), date.getMonth(), date.getDate() - daysFromMonday));
 }
 
 function isSameCalendarDay(left, right) {

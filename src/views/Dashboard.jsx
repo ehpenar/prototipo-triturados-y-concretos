@@ -2,6 +2,15 @@ import React, { Suspense, lazy, useMemo, useState } from "react";
 import { sum, cleanKey, formatMoney, normalizeText, parseMoney, parseDate } from "../utils/helpers.js";
 import { EmptyState } from "../components/EmptyState.jsx";
 import { useDeferredMount } from "../components/dashboard/useDeferredMount.js";
+import { buildDashboardSmartAlerts } from "../utils/dashboardSmartAlerts.js";
+import {
+  OPS_TIME_FILTER_OPTIONS,
+  buildOpsAvailableYears,
+  filterRecordsByOpsTimeRange,
+  getOpsMonthMatch,
+  getOpsTimeFilterLabel,
+  getStartOfCalendarWeek,
+} from "../utils/opsTimeFilter.js";
 
 const DashboardOperaciones = lazy(() =>
   import("../components/dashboard/DashboardOperaciones.jsx").then((module) => ({ default: module.DashboardOperaciones })),
@@ -43,7 +52,7 @@ const RANKING_SOURCE_DETAILS = {
   },
 };
 
-const ALERTS_SOURCE_DETAIL = "Fuente: todos los registros sincronizados. Revisa costos atípicos, registros sin estado y registros operacionales sin fecha reconocida.";
+const ALERTS_SOURCE_DETAIL = "Fuente: ORDENES DE TRABAJO TYC y Matriz de Seguimiento. Detecta OT en SIN REVISAR, fechas compromiso vencidas, SP sin orden de compra, compras elevadas y validaciones críticas. El periodo filtra por Marca temporal, FECHA DE SOLICITUD o recepción de SP.";
 const TREND_MODE_OPTIONS = [
   {
     value: "ots",
@@ -77,6 +86,7 @@ const KPI_TIME_FILTER_OPTIONS = [
   { value: "last-3-months", label: "Últimos 3 meses" },
   { value: "last-month", label: "Último mes" },
   { value: "last-week", label: "Última semana" },
+  { value: "this-week", label: "Esta semana" },
   { value: "month-0", label: "Enero" },
   { value: "month-1", label: "Febrero" },
   { value: "month-2", label: "Marzo" },
@@ -91,11 +101,14 @@ const KPI_TIME_FILTER_OPTIONS = [
   { value: "month-11", label: "Diciembre" },
 ];
 
-export function Dashboard({ documents, records, sourceRecords, alerts, rankingMode, setRankingMode, runAnalysis }) {
+export function Dashboard({ documents, records, sourceRecords, rankingMode, setRankingMode }) {
   const [kpiTimeFilter, setKpiTimeFilter] = useState("all");
   const [kpiYearFilter, setKpiYearFilter] = useState(() => new Date().getFullYear());
   const [trendMode, setTrendMode] = useState("ots");
+  const [alertsTimeFilter, setAlertsTimeFilter] = useState("all");
+  const [alertsYearFilter, setAlertsYearFilter] = useState(() => new Date().getFullYear());
   const isMonthFilter = getKpiMonthMatch(kpiTimeFilter) !== null;
+  const isAlertsMonthFilter = getOpsMonthMatch(alertsTimeFilter) !== null;
   const availableYears = useMemo(() => buildAvailableYears(records), [records]);
   const timeFilteredRecords = useMemo(
     () => filterRecordsByKpiTimeRange(records, kpiTimeFilter, kpiYearFilter),
@@ -118,6 +131,16 @@ export function Dashboard({ documents, records, sourceRecords, alerts, rankingMo
     [records, otMetrics],
   );
   const operationalRecords = sourceRecords || records;
+  const alertsAvailableYears = useMemo(() => buildOpsAvailableYears(operationalRecords), [operationalRecords]);
+  const alertsFilteredRecords = useMemo(
+    () => filterRecordsByOpsTimeRange(operationalRecords, alertsTimeFilter, alertsYearFilter),
+    [operationalRecords, alertsTimeFilter, alertsYearFilter],
+  );
+  const alertsTimeLabel = getOpsTimeFilterLabel(alertsTimeFilter, alertsYearFilter);
+  const smartAlerts = useMemo(
+    () => buildDashboardSmartAlerts(alertsFilteredRecords),
+    [alertsFilteredRecords],
+  );
   const operationalTrend = useMemo(() => buildOperationalTrend(records, trendMode), [records, trendMode]);
   const selectedTrendMode = TREND_MODE_OPTIONS.find((option) => option.value === trendMode) || TREND_MODE_OPTIONS[0];
   const { isReady: showOperations, sentinelRef: operationsSentinelRef } = useDeferredMount();
@@ -173,12 +196,34 @@ export function Dashboard({ documents, records, sourceRecords, alerts, rankingMo
         <section className="panel">
           <div className="panel-head">
             <h2>Alertas inteligentes</h2>
-            <button type="button" onClick={runAnalysis}>
-              Analizar
-            </button>
+            <span className="muted">{smartAlerts.length} alertas · {alertsTimeLabel}</span>
+          </div>
+          <div className="dashboard-kpi-filter-controls dashboard-alerts-filter">
+            <label>
+              Periodo
+              <select value={alertsTimeFilter} onChange={(event) => setAlertsTimeFilter(event.target.value)}>
+                {OPS_TIME_FILTER_OPTIONS.map((option) => (
+                  <option key={`alerts-time-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {isAlertsMonthFilter && (
+              <label>
+                Año
+                <select value={alertsYearFilter} onChange={(event) => setAlertsYearFilter(Number(event.target.value))}>
+                  {alertsAvailableYears.map((year) => (
+                    <option key={`alerts-year-${year}`} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
           <SourceNote text={ALERTS_SOURCE_DETAIL} />
-          <Alerts alerts={alerts} />
+          <Alerts alerts={smartAlerts} />
         </section>
         <section className="panel">
           <div className="panel-head">
@@ -513,6 +558,7 @@ function getKpiRangeStart(filter, now) {
   if (filter === "last-3-months") return addMonths(now, -3);
   if (filter === "last-month") return addMonths(now, -1);
   if (filter === "last-week") return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+  if (filter === "this-week") return getStartOfCalendarWeek(now);
   return null;
 }
 
@@ -547,7 +593,7 @@ function Alerts({ alerts }) {
   return (
     <div className="list dashboard-scroll-list">
       {alerts.map((alert, index) => (
-        <article className={`item severity-${alert.severity}`} key={`${alert.title}-${index}`}>
+        <article className={`item severity-${alert.severity}`} key={alert.id || `${alert.title}-${index}`}>
           <strong>{alert.title}</strong>
           <small>{alert.detail}</small>
         </article>

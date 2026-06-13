@@ -81,7 +81,6 @@ export const VIEWS = {
   reminders: ["Notas y recordatorios", "Crea notas, alertas recurrentes y hojas operativas desde la plataforma."],
   reports: ["Informes IA", "Genera informes profesionales y programa su envio por email o Telegram."],
   integrations: ["Email y Telegram", "Configura destinatarios y canales de notificacion automatica."],
-  assistant: ["Asistente IA operacional", "Preguntas, analisis y reportes sobre el contexto consolidado."],
   settings: ["Fuentes Google Sheets", "Administra documentos y agrega nuevas hojas al motor dinamico."],
 };
 
@@ -94,6 +93,5 @@ export const viewLabels = {
   reminders: "Notas y recordatorios",
   reports: "Informes IA",
   integrations: "Email y Telegram",
-  assistant: "Asistente IA",
   settings: "Fuentes",
 };

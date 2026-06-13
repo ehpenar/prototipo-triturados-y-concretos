@@ -28,8 +28,6 @@ import {
   findFinancialSummaryDocument,
   findFinancialSummarySheet,
 } from "./utils/financialSummary.js";
-import { answerLocally, askOpenAI } from "./utils/ai.js";
-
 // Import Modular Views
 import { useDebouncedValue } from "./hooks/useDebouncedValue.js";
 
@@ -41,7 +39,6 @@ const Automation = lazy(() => import("./views/Automation.jsx").then((module) => 
 const Reminders = lazy(() => import("./views/Reminders.jsx").then((module) => ({ default: module.Reminders })));
 const Reports = lazy(() => import("./views/Reports.jsx").then((module) => ({ default: module.Reports })));
 const Integrations = lazy(() => import("./views/Integrations.jsx").then((module) => ({ default: module.Integrations })));
-const Assistant = lazy(() => import("./views/Assistant.jsx").then((module) => ({ default: module.Assistant })));
 const Settings = lazy(() => import("./views/Settings.jsx").then((module) => ({ default: module.Settings })));
 
 const LINKED_EMAILS_SHEET = "Correos vinculados";
@@ -120,12 +117,13 @@ function App() {
   const [activeView, setActiveView] = useState("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [search, setSearch] = useState("");
-  const [pollInterval, setPollInterval] = useState(60000);
+  const [pollInterval, setPollInterval] = useState(() => {
+    const stored = Number(loadStored("operation_ai_poll_interval", 60000));
+    return [0, 30000, 60000, 300000].includes(stored) ? stored : 60000;
+  });
   const [filters, setFilters] = useState({ document: "", sheet: "", type: "" });
   const [rankingMode, setRankingMode] = useState("cost");
   const [equipmentSearch, setEquipmentSearch] = useState("");
-  const [assistantMessages, setAssistantMessages] = useState([]);
-  const [assistantQuestion, setAssistantQuestion] = useState("");
   const [newSource, setNewSource] = useState({ name: "", url: "" });
   const [notes, setNotes] = useState(() => loadStored("operation_ai_notes", []));
   const [automations, setAutomations] = useState(() => loadStored("operation_ai_custom_automations", []));
@@ -186,6 +184,10 @@ function App() {
   useEffect(() => {
     saveStored("operation_ai_notification_config", notificationConfig);
   }, [notificationConfig]);
+
+  useEffect(() => {
+    saveStored("operation_ai_poll_interval", pollInterval);
+  }, [pollInterval]);
 
   useEffect(() => {
     cleanupLegacyOtChangeState();
@@ -680,26 +682,6 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
-  const askAssistant = async (event) => {
-    event.preventDefault();
-    const question = assistantQuestion.trim();
-    if (!question) return;
-    setAssistantQuestion("");
-    setAssistantMessages((current) => [...current, { role: "user", text: question }]);
-    const localAnswer = answerLocally(question, records, relations, alerts, documents);
-    setAssistantMessages((current) => [...current, { role: "assistant", text: localAnswer }]);
-    if (!CONFIG.openai.apiKey) return;
-    try {
-      const aiAnswer = await askOpenAI(question, records, relations, alerts, documents);
-      setAssistantMessages((current) => [...current, { role: "assistant", text: aiAnswer }]);
-    } catch (error) {
-      setAssistantMessages((current) => [
-        ...current,
-        { role: "assistant", text: `No pude consultar OpenAI desde el navegador: ${error.message}. El analisis local queda disponible.` },
-      ]);
-    }
-  };
-
   const [title, subtitle] = VIEWS[activeView];
 
   return (
@@ -855,15 +837,6 @@ function App() {
 
           {activeView === "integrations" && (
             <Integrations config={notificationConfig} setConfig={updateNotificationConfig} tokenRef={tokenRef} />
-          )}
-
-          {activeView === "assistant" && (
-            <Assistant
-              messages={assistantMessages}
-              question={assistantQuestion}
-              setQuestion={setAssistantQuestion}
-              onSubmit={askAssistant}
-            />
           )}
 
           {activeView === "settings" && (

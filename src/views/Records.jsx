@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from "react";
 import { CONFIG } from "../constants/config.js";
 import { columnName, createId, extractSpreadsheetId, normalizeText } from "../utils/helpers.js";
 import {
@@ -45,71 +45,47 @@ export function Records({
   const [otFilter, setOtFilter] = useState("");
   const [estadoFilter, setEstadoFilter] = useState("");
   const [columnWidths, setColumnWidths] = useState({});
-  const [reportStatus, setReportStatus] = useState("");
-  const [reportEmailStatus, setReportEmailStatus] = useState("");
-  const [reportEmailSender, setReportEmailSender] = useState("");
-  const [reportEmailRecipients, setReportEmailRecipients] = useState([]);
   const [otReports, setOtReports] = useState({});
   const debouncedOtFilter = useDebouncedValue(otFilter);
-  const targetRecords = useMemo(() => records, [records]);
+  const deferredOtFilter = useDeferredValue(debouncedOtFilter);
+  const deferredEstadoFilter = useDeferredValue(estadoFilter);
   const sourceRecordIndexes = useMemo(() => buildSourceRecordIndexes(sourceRecords), [sourceRecords]);
-  const documentFilterValues = useMemo(() => [...new Set(sourceRecords.map((record) => record.sourceName))], [sourceRecords]);
-  const typeFilterValues = useMemo(() => [...new Set(sourceRecords.map((record) => record.type))], [sourceRecords]);
+  const { documentFilterValues, typeFilterValues, otOptions } = useMemo(
+    () => buildSourceFilterOptions(sourceRecords),
+    [sourceRecords],
+  );
   const sheetCount = useMemo(() => documents.reduce((total, document) => total + document.sheets.length, 0), [documents]);
-  const otOptions = useMemo(() => {
-    const values = sourceRecords.filter((record) => isTargetRecord(record)).map(getRecordOt).filter(Boolean);
-    return [...new Set(values)].sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
-  }, [sourceRecords]);
   const tableRecords = useMemo(() => {
-    const query = normalizeText(debouncedOtFilter);
-    const statusQuery = normalizeText(estadoFilter);
-    return targetRecords.filter((record) => {
+    const query = normalizeText(deferredOtFilter);
+    const statusQuery = normalizeText(deferredEstadoFilter);
+    return records.filter((record) => {
       const matchesOt = !query || normalizeText(getRecordOt(record)).includes(query);
       const matchesStatus = !statusQuery || normalizeText(getRecordStatusForFilter(record)) === statusQuery;
       return matchesOt && matchesStatus;
     });
-  }, [targetRecords, debouncedOtFilter, estadoFilter]);
+  }, [records, deferredOtFilter, deferredEstadoFilter]);
   const headers = useMemo(() => tableRecords[0]?.headers || [], [tableRecords]);
   const totalPages = Math.max(1, Math.ceil(tableRecords.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const pageRecords = useMemo(() => tableRecords.slice((safePage - 1) * pageSize, safePage * pageSize), [tableRecords, safePage, pageSize]);
   const tableRecordsByUid = useMemo(() => new Map(tableRecords.map((record) => [record.uid, record])), [tableRecords]);
-  const headerTooltips = useMemo(
-    () => buildHeaderTooltips(headers, pageRecords, sourceRecords, sourceRecordIndexes),
-    [headers, pageRecords, sourceRecords, sourceRecordIndexes],
+  const pageCellValues = useMemo(
+    () => buildPageCellValues(pageRecords, headers, sourceRecords, sourceRecordIndexes),
+    [pageRecords, headers, sourceRecords, sourceRecordIndexes],
   );
+  const headerTooltipCacheRef = useRef(new Map());
+  useEffect(() => {
+    headerTooltipCacheRef.current = new Map();
+  }, [headers, pageRecords, pageCellValues]);
+  const requestHeaderTooltip = useCallback((header) => {
+    const cache = headerTooltipCacheRef.current;
+    if (cache.has(header)) return cache.get(header);
+    const tooltip = calculateHeaderTooltip(header, pageRecords, sourceRecords, sourceRecordIndexes, pageCellValues);
+    cache.set(header, tooltip);
+    return tooltip;
+  }, [headers, pageRecords, pageCellValues, sourceRecords, sourceRecordIndexes]);
   const selectedRecord = tableRecordsByUid.get(selectedRecordId) || null;
   const detailedRecord = tableRecordsByUid.get(detailedRecordId) || null;
-  const detailedOt = detailedRecord ? getRecordOt(detailedRecord) : "";
-  const detailedFinancialTarget = useMemo(
-    () => (detailedRecord ? findFinancialReportTarget(detailedRecord, sourceRecords, sourceRecordIndexes) : null),
-    [detailedRecord, sourceRecords, sourceRecordIndexes],
-  );
-  const detailedFinancialRecord = detailedFinancialTarget?.record || detailedRecord || null;
-  const detailedWorkOrderRecord = useMemo(
-    () => (detailedRecord ? findWorkOrderRecord(sourceRecords, detailedOt, sourceRecordIndexes) || detailedRecord : null),
-    [detailedRecord, detailedOt, sourceRecords, sourceRecordIndexes],
-  );
-  const detailedWorkOrderFields = useMemo(
-    () => (detailedWorkOrderRecord ? buildWorkOrderDetailFields(detailedWorkOrderRecord) : []),
-    [detailedWorkOrderRecord],
-  );
-  const detailedMatrixRecords = useMemo(
-    () => (detailedRecord ? getRelatedMatrixRecords(sourceRecords, detailedOt, sourceRecordIndexes) : []),
-    [detailedRecord, detailedOt, sourceRecords, sourceRecordIndexes],
-  );
-  const detailedBillingRecords = useMemo(
-    () => (detailedRecord ? getRelatedBillingRecords(sourceRecords, detailedOt, sourceRecordIndexes) : []),
-    [detailedRecord, detailedOt, sourceRecords, sourceRecordIndexes],
-  );
-  const detailedMatrixPurchaseTotal = useMemo(() => sumMatrixPurchaseValue(detailedMatrixRecords), [detailedMatrixRecords]);
-  const detailedReport = useMemo(() => (
-    detailedRecord
-      ? otReports[detailedRecord.uid] || getCell(detailedFinancialRecord, ["INFORME"], ["informe"])
-      : ""
-  ), [detailedRecord, detailedFinancialRecord, otReports]);
-  const reportSenderEmails = useMemo(() => getSenderEmails(notificationConfig), [notificationConfig]);
-  const reportReceiverEmails = useMemo(() => getReceiverEmails(notificationConfig), [notificationConfig]);
   const selectedSheet = useMemo(() => {
     const document = findFilteredDocument(documents, filters) || documents.find((item) => item.sheets.some((sheet) => isTargetSheet(sheet)));
     const sheet = findFilteredSheet(document, filters) || document?.sheets.find((item) => isTargetSheet(item)) || document?.sheets[0];
@@ -121,7 +97,10 @@ export function Records({
     [selectedDocumentForFilters],
   );
   const embeddedSheet = useMemo(() => findEmbeddedSheet(documents, filters), [documents, filters]);
-  const embedUrl = useMemo(() => buildGoogleSheetsEmbedUrl(embeddedSheet), [embeddedSheet]);
+  const embedUrl = useMemo(
+    () => (viewMode === "sheets" ? buildGoogleSheetsEmbedUrl(embeddedSheet) : ""),
+    [embeddedSheet, viewMode],
+  );
 
   useEffect(() => {
     if (!filters.document || !documents.length) return;
@@ -136,51 +115,6 @@ export function Records({
     setPage(1);
   }, [filters, tableRecords.length, viewMode, otFilter, estadoFilter]);
 
-  useEffect(() => {
-    setReportStatus("");
-    setReportEmailStatus("");
-  }, [detailedRecordId]);
-
-  useEffect(() => {
-    setReportEmailSender((current) => current || reportSenderEmails[0] || "");
-    setReportEmailRecipients(reportReceiverEmails);
-  }, [detailedRecordId, reportSenderEmails, reportReceiverEmails]);
-
-  const generateReportForDetailedRecord = async () => {
-    if (!detailedRecord) return;
-    const ot = getRecordOt(detailedRecord);
-    const target = findFinancialReportTarget(detailedRecord, sourceRecords, sourceRecordIndexes);
-    if (!target?.rowNumber) {
-      setReportStatus("No se encontro la fila de Hoja 2 para guardar el informe.");
-      return;
-    }
-    setReportStatus("Generando informe...");
-    try {
-      await yieldToBrowser();
-      const reportColumn = getFinancialReportColumn(target.record);
-      if (!reportColumn) {
-        setReportStatus("No se encontro la columna INFORME en Hoja 2.");
-        return;
-      }
-      const consolidatedData = buildOtReportPayload(detailedRecord, sourceRecords, target.record || detailedRecord, sourceRecordIndexes);
-      const report = await generateOtReport(consolidatedData);
-      await updateSheetCell(
-        target.spreadsheetId,
-        FINANCIAL_SUMMARY_SHEET,
-        reportColumn,
-        target.rowNumber,
-        report,
-        tokenRef,
-      );
-      setOtReports((current) => ({ ...current, [detailedRecord.uid]: report }));
-      setReportStatus(`Informe guardado en Hoja 2 columna ${reportColumn} (INFORME).`);
-      addLog?.(`Informe generado para OT ${ot || "NO ESPECIFICADO"} y guardado en columna ${reportColumn} (INFORME).`);
-      onSaved?.();
-    } catch (error) {
-      setReportStatus(`Error generando informe: ${error.message}`);
-    }
-  };
-
   const selectRecord = useCallback((recordId) => {
     setSelectedRecordId(recordId);
   }, []);
@@ -188,42 +122,6 @@ export function Records({
   const showRecordDetail = useCallback((recordId) => {
     setDetailedRecordId(recordId);
   }, []);
-
-  const toggleReportRecipient = (email) => {
-    setReportEmailRecipients((current) => {
-      const exists = current.some((item) => item.toLowerCase() === email.toLowerCase());
-      return exists
-        ? current.filter((item) => item.toLowerCase() !== email.toLowerCase())
-        : [...current, email];
-    });
-  };
-
-  const sendDetailedReportByEmail = async () => {
-    if (!detailedReport) {
-      setReportEmailStatus("Primero genera o carga un informe.");
-      return;
-    }
-    if (!reportEmailSender) {
-      setReportEmailStatus("Selecciona un correo emisor.");
-      return;
-    }
-    if (!reportEmailRecipients.length) {
-      setReportEmailStatus("Selecciona al menos un receptor.");
-      return;
-    }
-    setReportEmailStatus("Enviando informe por email...");
-    try {
-      await sendGmailMessage({
-        from: reportEmailSender,
-        to: reportEmailRecipients.join(", "),
-        subject: `Informe OT ${getRecordOt(detailedRecord) || ""}`.trim(),
-        message: detailedReport,
-      }, tokenRef);
-      setReportEmailStatus("Informe enviado por email.");
-    } catch (error) {
-      setReportEmailStatus(`Error enviando informe: ${error.message}`);
-    }
-  };
 
   const resizeColumn = useCallback((header, startEvent) => {
     startEvent.preventDefault();
@@ -400,7 +298,7 @@ export function Records({
           </section>
 
           {showAppend && selectedSheet && (
-            <AppendRecordPanel document={selectedSheet.document} records={targetRecords} sheet={selectedSheet.sheet} tokenRef={tokenRef} onSaved={onSaved} />
+            <AppendRecordPanel document={selectedSheet.document} records={records} sheet={selectedSheet.sheet} tokenRef={tokenRef} onSaved={onSaved} />
           )}
 
           {showStructure && (
@@ -433,10 +331,10 @@ export function Records({
                         {headers.map((header, index) => (
                           <ResizableHeader
                             header={header}
-                            key={`header-${header}-${index}`}
+                            key={`header-${header}-${index}-p${safePage}`}
                             onResizeStart={resizeColumn}
+                            onTooltipRequest={requestHeaderTooltip}
                             width={columnWidths[header] || defaultColumnWidth(header)}
-                            tooltip={headerTooltips[header] || ""}
                           />
                         ))}
                       </tr>
@@ -444,6 +342,7 @@ export function Records({
                     <tbody>
                       {pageRecords.map((record, recordIndex) => (
                         <RecordReadOnlyRow
+                          cellValues={pageCellValues.get(record.uid)}
                           headers={headers}
                           isSelected={selectedRecord?.uid === record.uid}
                           key={`record-row-${record.uid}-${recordIndex}`}
@@ -451,8 +350,6 @@ export function Records({
                           widths={columnWidths}
                           onSelect={selectRecord}
                           onDetailClick={showRecordDetail}
-                          sourceRecords={sourceRecords}
-                          sourceRecordIndexes={sourceRecordIndexes}
                         />
                       ))}
                     </tbody>
@@ -464,7 +361,7 @@ export function Records({
             {selectedRecord && (
               <RecordSidePanel
                 record={selectedRecord}
-                records={targetRecords}
+                records={records}
                 notes={notes}
                 notificationConfig={notificationConfig}
                 otOptions={otOptions}
@@ -478,9 +375,152 @@ export function Records({
         </>
       )}
 
-      {/* Modal Ver Detalle */}
       {detailedRecord && (
-        <div className="modal-overlay" style={{
+        <RecordDetailModal
+          addLog={addLog}
+          notificationConfig={notificationConfig}
+          onClose={() => setDetailedRecordId("")}
+          onSaved={onSaved}
+          otReports={otReports}
+          record={detailedRecord}
+          setOtReports={setOtReports}
+          sourceRecordIndexes={sourceRecordIndexes}
+          sourceRecords={sourceRecords}
+          tokenRef={tokenRef}
+        />
+      )}
+    </section>
+  );
+}
+
+function RecordDetailModal({
+  record,
+  sourceRecords,
+  sourceRecordIndexes,
+  notificationConfig,
+  tokenRef,
+  addLog,
+  onSaved,
+  onClose,
+  otReports,
+  setOtReports,
+}) {
+  const [reportStatus, setReportStatus] = useState("");
+  const [reportEmailStatus, setReportEmailStatus] = useState("");
+  const [reportEmailSender, setReportEmailSender] = useState("");
+  const [reportEmailRecipients, setReportEmailRecipients] = useState([]);
+  const detailedOt = getRecordOt(record);
+  const detailedFinancialTarget = useMemo(
+    () => findFinancialReportTarget(record, sourceRecords, sourceRecordIndexes),
+    [record, sourceRecords, sourceRecordIndexes],
+  );
+  const detailedFinancialRecord = detailedFinancialTarget?.record || record || null;
+  const detailedWorkOrderRecord = useMemo(
+    () => findWorkOrderRecord(sourceRecords, detailedOt, sourceRecordIndexes) || record,
+    [record, detailedOt, sourceRecords, sourceRecordIndexes],
+  );
+  const detailedWorkOrderFields = useMemo(
+    () => (detailedWorkOrderRecord ? buildWorkOrderDetailFields(detailedWorkOrderRecord) : []),
+    [detailedWorkOrderRecord],
+  );
+  const detailedMatrixRecords = useMemo(
+    () => getRelatedMatrixRecords(sourceRecords, detailedOt, sourceRecordIndexes),
+    [detailedOt, sourceRecords, sourceRecordIndexes],
+  );
+  const detailedBillingRecords = useMemo(
+    () => getRelatedBillingRecords(sourceRecords, detailedOt, sourceRecordIndexes),
+    [detailedOt, sourceRecords, sourceRecordIndexes],
+  );
+  const detailedMatrixPurchaseTotal = useMemo(() => sumMatrixPurchaseValue(detailedMatrixRecords), [detailedMatrixRecords]);
+  const detailedReport = useMemo(
+    () => otReports[record.uid] || getCell(detailedFinancialRecord, ["INFORME"], ["informe"]),
+    [record.uid, detailedFinancialRecord, otReports],
+  );
+  const reportSenderEmails = useMemo(() => getSenderEmails(notificationConfig), [notificationConfig]);
+  const reportReceiverEmails = useMemo(() => getReceiverEmails(notificationConfig), [notificationConfig]);
+
+  useEffect(() => {
+    setReportStatus("");
+    setReportEmailStatus("");
+  }, [record.uid]);
+
+  useEffect(() => {
+    setReportEmailSender((current) => current || reportSenderEmails[0] || "");
+    setReportEmailRecipients(reportReceiverEmails);
+  }, [record.uid, reportSenderEmails, reportReceiverEmails]);
+
+  const generateReportForDetailedRecord = async () => {
+    const ot = getRecordOt(record);
+    const target = findFinancialReportTarget(record, sourceRecords, sourceRecordIndexes);
+    if (!target?.rowNumber) {
+      setReportStatus("No se encontro la fila de Hoja 2 para guardar el informe.");
+      return;
+    }
+    setReportStatus("Generando informe...");
+    try {
+      await yieldToBrowser();
+      const reportColumn = getFinancialReportColumn(target.record);
+      if (!reportColumn) {
+        setReportStatus("No se encontro la columna INFORME en Hoja 2.");
+        return;
+      }
+      const consolidatedData = buildOtReportPayload(record, sourceRecords, target.record || record, sourceRecordIndexes);
+      const report = await generateOtReport(consolidatedData);
+      await updateSheetCell(
+        target.spreadsheetId,
+        FINANCIAL_SUMMARY_SHEET,
+        reportColumn,
+        target.rowNumber,
+        report,
+        tokenRef,
+      );
+      setOtReports((current) => ({ ...current, [record.uid]: report }));
+      setReportStatus(`Informe guardado en Hoja 2 columna ${reportColumn} (INFORME).`);
+      addLog?.(`Informe generado para OT ${ot || "NO ESPECIFICADO"} y guardado en columna ${reportColumn} (INFORME).`);
+      onSaved?.();
+    } catch (error) {
+      setReportStatus(`Error generando informe: ${error.message}`);
+    }
+  };
+
+  const toggleReportRecipient = (email) => {
+    setReportEmailRecipients((current) => {
+      const exists = current.some((item) => item.toLowerCase() === email.toLowerCase());
+      return exists
+        ? current.filter((item) => item.toLowerCase() !== email.toLowerCase())
+        : [...current, email];
+    });
+  };
+
+  const sendDetailedReportByEmail = async () => {
+    if (!detailedReport) {
+      setReportEmailStatus("Primero genera o carga un informe.");
+      return;
+    }
+    if (!reportEmailSender) {
+      setReportEmailStatus("Selecciona un correo emisor.");
+      return;
+    }
+    if (!reportEmailRecipients.length) {
+      setReportEmailStatus("Selecciona al menos un receptor.");
+      return;
+    }
+    setReportEmailStatus("Enviando informe por email...");
+    try {
+      await sendGmailMessage({
+        from: reportEmailSender,
+        to: reportEmailRecipients.join(", "),
+        subject: `Informe OT ${getRecordOt(record) || ""}`.trim(),
+        message: detailedReport,
+      }, tokenRef);
+      setReportEmailStatus("Informe enviado por email.");
+    } catch (error) {
+      setReportEmailStatus(`Error enviando informe: ${error.message}`);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" style={{
           position: "fixed",
           top: 0,
           left: 0,
@@ -520,7 +560,7 @@ export function Records({
                   letterSpacing: "0.05em",
                   textTransform: "uppercase" 
                 }}>
-                  OT - {getRecordOt(detailedRecord)}
+                  OT - {getRecordOt(record)}
                 </span>
                 <h2 style={{ margin: "8px 0 2px 0", fontSize: "24px", color: "var(--ink)", fontWeight: "800" }}>
                   Consolidado Completo de la OT
@@ -549,7 +589,7 @@ export function Records({
                   {reportStatus === "Generando informe..." ? "Generando..." : "Generar informe"}
                 </button>
                 <button
-                  onClick={() => setDetailedRecordId("")}
+                  onClick={() => onClose()}
                   style={{
                     background: "#f1f5f9",
                     border: 0,
@@ -592,7 +632,7 @@ export function Records({
                       QUIEN SOLICITA
                     </span>
                     <strong style={{ display: "block", fontSize: "16px", color: "var(--ink)", marginTop: "4px", textTransform: "uppercase" }}>
-                      {getCell(detailedFinancialRecord, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]) || getCell(detailedRecord, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]) || "NO ESPECIFICADO"}
+                      {getCell(detailedFinancialRecord, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]) || getCell(record, ["QUIEN SOLICITA", "QUIÉN SOLICITA"]) || "NO ESPECIFICADO"}
                     </strong>
                   </div>
 
@@ -898,10 +938,10 @@ export function Records({
                   📋 Datos Generales de la OT
                 </h4>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
-                  {detailedRecord.headers.slice(0, 8).map((h) => (
+                  {record.headers.slice(0, 8).map((h) => (
                     <div key={`tech-${h}`} style={{ background: "#f1f5f9", padding: "8px 12px", borderRadius: "6px" }}>
                       <span style={{ display: "block", fontSize: "10px", color: "var(--muted)" }}>{h}</span>
-                      <span style={{ fontSize: "12px", fontWeight: "600", color: "var(--ink)" }}>{detailedRecord.cells[h] || "-"}</span>
+                      <span style={{ fontSize: "12px", fontWeight: "600", color: "var(--ink)" }}>{record.cells[h] || "-"}</span>
                     </div>
                   ))}
                 </div>
@@ -912,7 +952,7 @@ export function Records({
             {/* Footer */}
             <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px solid var(--line)", paddingTop: "16px" }}>
               <button 
-                onClick={() => setDetailedRecordId("")} 
+                onClick={() => onClose()} 
                 style={{ 
                   padding: "10px 24px", 
                   background: "var(--accent)", 
@@ -930,8 +970,6 @@ export function Records({
             </div>
           </div>
         </div>
-      )}
-    </section>
   );
 }
 
@@ -1482,15 +1520,52 @@ function countListElements(val) {
   return parts.length;
 }
 
-function calculateHeaderTooltip(header, records, sourceRecords, sourceRecordIndexes = null) {
+function buildSourceFilterOptions(sourceRecords) {
+  const documentNames = new Set();
+  const types = new Set();
+  const otValues = new Set();
+  (sourceRecords || []).forEach((record) => {
+    if (record.sourceName) documentNames.add(record.sourceName);
+    if (record.type) types.add(record.type);
+    if (isTargetRecord(record)) {
+      const ot = getRecordOt(record);
+      if (ot) otValues.add(ot);
+    }
+  });
+  return {
+    documentFilterValues: [...documentNames],
+    typeFilterValues: [...types],
+    otOptions: [...otValues].sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true })),
+  };
+}
+
+function buildPageCellValues(pageRecords, headers, sourceRecords, sourceRecordIndexes) {
+  const byUid = new Map();
+  pageRecords.forEach((record) => {
+    const cells = {};
+    headers.forEach((header) => {
+      cells[header] = getCellValue(record, header, sourceRecords, sourceRecordIndexes);
+    });
+    byUid.set(record.uid, cells);
+  });
+  return byUid;
+}
+
+function getCachedCellValue(record, header, cellValuesByUid, sourceRecords, sourceRecordIndexes) {
+  const cached = cellValuesByUid?.get(record.uid)?.[header];
+  if (cached !== undefined) return cached;
+  return getCellValue(record, header, sourceRecords, sourceRecordIndexes);
+}
+
+function calculateHeaderTooltip(header, records, sourceRecords, sourceRecordIndexes = null, cellValuesByUid = null) {
   const norm = normalizeText(header);
   const sourceDetail = buildHeaderSourceDetail(header, records);
+  const readValue = (rec) => getCachedCellValue(rec, header, cellValuesByUid, sourceRecords, sourceRecordIndexes);
   const isList = norm === "detalle cruce sp" || norm === "ordenes de compra" || norm === "detalle_cruce_sp" || norm === "ordenes_de_compra";
   if (isList) {
     let totalElements = 0;
     records.forEach((rec) => {
-      const val = getCellValue(rec, header, sourceRecords, sourceRecordIndexes);
-      totalElements += countListElements(val);
+      totalElements += countListElements(readValue(rec));
     });
     return `Cantidad total de items: ${totalElements}${sourceDetail}`;
   }
@@ -1500,7 +1575,7 @@ function calculateHeaderTooltip(header, records, sourceRecords, sourceRecordInde
     let totalSum = 0;
     let count = 0;
     records.forEach((rec) => {
-      const val = getCellValue(rec, header, sourceRecords, sourceRecordIndexes);
+      const val = readValue(rec);
       if (val !== undefined && val !== null && String(val).trim() !== "") {
         const num = parseFinancialMoney(val);
         if (!isNaN(num)) {
@@ -1515,19 +1590,12 @@ function calculateHeaderTooltip(header, records, sourceRecords, sourceRecordInde
 
   let count = 0;
   records.forEach((rec) => {
-    const val = getCellValue(rec, header, sourceRecords, sourceRecordIndexes);
+    const val = readValue(rec);
     if (val !== undefined && val !== null && String(val).trim() !== "") {
       count += 1;
     }
   });
   return `Cantidad de items: ${count}${sourceDetail}`;
-}
-
-function buildHeaderTooltips(headers, records, sourceRecords, sourceRecordIndexes = null) {
-  return headers.reduce((tooltips, header) => {
-    tooltips[header] = calculateHeaderTooltip(header, records, sourceRecords, sourceRecordIndexes);
-    return tooltips;
-  }, {});
 }
 
 function buildHeaderSourceDetail(header, records) {
@@ -1548,10 +1616,18 @@ function buildHeaderSourceDetail(header, records) {
   return `\nOrigen:\n${sourceLines.join("\n")}`;
 }
 
-const ResizableHeader = React.memo(function ResizableHeader({ header, onResizeStart, width, tooltip }) {
+const ResizableHeader = React.memo(function ResizableHeader({ header, onResizeStart, onTooltipRequest, width }) {
+  const [tooltip, setTooltip] = useState("");
+
+  const handleMouseEnter = () => {
+    if (tooltip) return;
+    setTooltip(onTooltipRequest(header) || "");
+  };
+
   return (
     <th 
       className={isOtHeader(header) ? "ot-column" : ""} 
+      onMouseEnter={handleMouseEnter}
       style={{ width, minWidth: width, maxWidth: width }}
       title={tooltip}
     >
@@ -1567,14 +1643,13 @@ const ResizableHeader = React.memo(function ResizableHeader({ header, onResizeSt
 });
 
 const RecordReadOnlyRow = React.memo(function RecordReadOnlyRow({
+  cellValues,
   headers,
   isSelected,
   record,
   widths,
   onSelect,
   onDetailClick,
-  sourceRecords,
-  sourceRecordIndexes,
 }) {
   return (
     <tr className={isSelected ? "selected-row" : ""}>
@@ -1592,7 +1667,7 @@ const RecordReadOnlyRow = React.memo(function RecordReadOnlyRow({
             maxWidth: widths[header] || defaultColumnWidth(header),
           }}
         >
-          {getCellValue(record, header, sourceRecords, sourceRecordIndexes)}
+          {cellValues?.[header] ?? record.cells[header] ?? ""}
         </td>
       ))}
     </tr>

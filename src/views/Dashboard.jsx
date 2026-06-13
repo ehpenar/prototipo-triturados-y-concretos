@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useMemo, useState } from "react";
-import { sum, cleanKey, formatMoney, normalizeText, parseMoney } from "../utils/helpers.js";
+import { sum, cleanKey, formatMoney, normalizeText, parseMoney, parseDate } from "../utils/helpers.js";
 import { EmptyState } from "../components/EmptyState.jsx";
 import { useDeferredMount } from "../components/dashboard/useDeferredMount.js";
 
@@ -44,7 +44,32 @@ const RANKING_SOURCE_DETAILS = {
 };
 
 const ALERTS_SOURCE_DETAIL = "Fuente: todos los registros sincronizados. Revisa costos atípicos, registros sin estado y registros operacionales sin fecha reconocida.";
-const TREND_SOURCE_DETAIL = "Fuente: registros con una fecha reconocida en cualquier documento. Columnas detectadas por nombre: FECHA, DIA, CREADO, EMISION, CIERRE o ENTREGA.";
+const TREND_MODE_OPTIONS = [
+  {
+    value: "ots",
+    label: "OTs creadas",
+    subtitle: "Nuevas OT por mes (ORDENES DE TRABAJO TYC)",
+    sourceDetail: "Fuente: ORDENES DE TRABAJO TYC. Fecha: Marca temporal o FECHA DE SOLICITUD. Desglose por columna ESTADO: EN PROCESO, SIN REVISAR, MATERIALES PENDIENTES, TERMINADO u otros.",
+    valueLabel: "OTs",
+    format: "count",
+  },
+  {
+    value: "sps",
+    label: "SPs en matriz",
+    subtitle: "Solicitudes de pedido por mes (Matriz de Seguimiento)",
+    sourceDetail: "Fuente: Matriz de Seguimiento. Fecha: Fecha de Recepción de la SP. Desglose por Estado Actual de la SP: ENTREGADO, EN PROCESO DE PAGO u otras pendientes.",
+    valueLabel: "SPs",
+    format: "count",
+  },
+  {
+    value: "matrix-cost",
+    label: "Costo compras",
+    subtitle: "Valor de compra por mes",
+    sourceDetail: "Fuente: Matriz de Seguimiento / Respuestas de formulario 1. Suma VALOR COMPRA por mes según fecha de recepción de la SP.",
+    valueLabel: "Costo",
+    format: "money",
+  },
+];
 const KPI_TIME_FILTER_OPTIONS = [
   { value: "all", label: "Total histórico" },
   { value: "current-year", label: "Año actual" },
@@ -69,6 +94,7 @@ const KPI_TIME_FILTER_OPTIONS = [
 export function Dashboard({ documents, records, sourceRecords, alerts, rankingMode, setRankingMode, runAnalysis }) {
   const [kpiTimeFilter, setKpiTimeFilter] = useState("all");
   const [kpiYearFilter, setKpiYearFilter] = useState(() => new Date().getFullYear());
+  const [trendMode, setTrendMode] = useState("ots");
   const isMonthFilter = getKpiMonthMatch(kpiTimeFilter) !== null;
   const availableYears = useMemo(() => buildAvailableYears(records), [records]);
   const timeFilteredRecords = useMemo(
@@ -92,6 +118,8 @@ export function Dashboard({ documents, records, sourceRecords, alerts, rankingMo
     [records, otMetrics],
   );
   const operationalRecords = sourceRecords || records;
+  const operationalTrend = useMemo(() => buildOperationalTrend(records, trendMode), [records, trendMode]);
+  const selectedTrendMode = TREND_MODE_OPTIONS.find((option) => option.value === trendMode) || TREND_MODE_OPTIONS[0];
   const { isReady: showOperations, sentinelRef: operationsSentinelRef } = useDeferredMount();
 
   return (
@@ -168,10 +196,25 @@ export function Dashboard({ documents, records, sourceRecords, alerts, rankingMo
       <section className="panel">
         <div className="panel-head">
           <h2>Tendencias operacionales</h2>
-          <span>{dashboardMetrics.trend.length ? "Registros por mes" : "Sin fechas suficientes"}</span>
+          <select value={trendMode} onChange={(event) => setTrendMode(event.target.value)}>
+            {TREND_MODE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
-        <SourceNote text={TREND_SOURCE_DETAIL} />
-        <TrendChart points={dashboardMetrics.trend} />
+        <p className="note" style={{ marginTop: 0 }}>
+          {selectedTrendMode.subtitle} · últimos 12 meses calendario
+        </p>
+        <SourceNote text={selectedTrendMode.sourceDetail} />
+        <TrendComparison comparison={operationalTrend.comparison} format={selectedTrendMode.format} valueLabel={selectedTrendMode.valueLabel} />
+        <TrendChart format={selectedTrendMode.format} mode={trendMode} points={operationalTrend.points} />
+        <p className="muted trend-legend">
+          Eje: mes/año · Altura: {selectedTrendMode.format === "money" ? "suma de VALOR COMPRA" : `cantidad de ${selectedTrendMode.valueLabel}`}
+          {trendMode === "ots" ? " · Pasa el cursor sobre cada barra para ver EN PROCESO, SIN REVISAR, MATERIALES PENDIENTES, etc." : ""}
+          {trendMode === "sps" ? " · Pasa el cursor sobre cada barra para ver ENTREGADO, EN PROCESO DE PAGO u otras pendientes" : ""}
+        </p>
       </section>
       <div ref={operationsSentinelRef} style={{ height: 1, width: "100%" }} aria-hidden="true" />
       {showOperations ? (
@@ -189,7 +232,6 @@ export function Dashboard({ documents, records, sourceRecords, alerts, rankingMo
 
 function buildDashboardMetrics(allRecords, timeFilteredRecords) {
   const equipmentKeys = new Set();
-  const trendByMonth = new Map();
   let workOrderRows = 0;
   let totalCost = 0;
   let totalHours = 0;
@@ -204,15 +246,6 @@ function buildDashboardMetrics(allRecords, timeFilteredRecords) {
       const value = String(record.cells[matchingHeader] || "").trim();
       if (matchingHeader && /\d/.test(value)) workOrderRows += 1;
     }
-
-    const date = record.normalized.dateValue;
-    if (date) {
-      const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      const current = trendByMonth.get(month) || { month, value: 0, cost: 0 };
-      current.value += 1;
-      current.cost += record.normalized.costNumber || 0;
-      trendByMonth.set(month, current);
-    }
   });
 
   timeFilteredRecords.forEach((record) => {
@@ -221,18 +254,223 @@ function buildDashboardMetrics(allRecords, timeFilteredRecords) {
     if (isDashboardBillingCostRecord(record)) totalLaborValue += getBillingCostValue(record);
   });
 
-  const trend = [...trendByMonth.values()]
-    .sort((left, right) => left.month.localeCompare(right.month))
-    .slice(-12);
-
   return {
     totalCost,
     totalHours,
     totalLaborValue,
     equipmentCount: equipmentKeys.size,
-    trend,
     workOrderRows,
   };
+}
+
+function buildOperationalTrend(records, mode) {
+  const trendByMonth = new Map();
+
+  records.forEach((record) => {
+    const date = getTrendDateForRecord(record, mode);
+    if (!date) return;
+
+    const month = formatMonthKey(date);
+    const current = trendByMonth.get(month) || createTrendBucket(mode, month);
+    if (mode === "matrix-cost") {
+      current.value += getMatrixPurchaseValue(record);
+    } else if (mode === "sps") {
+      current.value += 1;
+      const spBucket = classifySpTrendStatus(getSpStatus(record));
+      current[spBucket] += 1;
+    } else {
+      current.value += 1;
+      const otBucket = classifyOtTrendStatus(getOtStatus(record));
+      current[otBucket] += 1;
+    }
+    trendByMonth.set(month, current);
+  });
+
+  const points = buildTrendMonthSeries(trendByMonth, mode);
+
+  return {
+    points,
+    comparison: buildTrendComparison(points),
+  };
+}
+
+const TREND_MIN_YEAR = 2020;
+
+function buildTrendMonthSeries(trendByMonth, mode) {
+  const validMonths = [...trendByMonth.keys()].sort();
+  if (!validMonths.length) return [];
+
+  const latestMonth = validMonths[validMonths.length - 1];
+  const [latestYear, latestMonthNumber] = latestMonth.split("-").map(Number);
+  const monthKeys = [];
+  let year = latestYear;
+  let month = latestMonthNumber;
+
+  for (let index = 0; index < 12; index += 1) {
+    monthKeys.unshift(formatMonthKeyFromParts(year, month));
+    month -= 1;
+    if (month < 1) {
+      month = 12;
+      year -= 1;
+    }
+  }
+
+  return monthKeys.map((monthKey) => trendByMonth.get(monthKey) || createTrendBucket(mode, monthKey));
+}
+
+function formatMonthKeyFromParts(year, month) {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function isValidTrendDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return false;
+  const year = date.getFullYear();
+  const maxYear = new Date().getFullYear() + 1;
+  return year >= TREND_MIN_YEAR && year <= maxYear;
+}
+
+function parseTrendDate(value) {
+  const date = parseDate(value);
+  return isValidTrendDate(date) ? date : null;
+}
+
+function createTrendBucket(mode, month) {
+  if (mode === "ots") {
+    return {
+      month,
+      value: 0,
+      enProceso: 0,
+      sinRevisar: 0,
+      materialesPendientes: 0,
+      terminado: 0,
+      otros: 0,
+    };
+  }
+  if (mode === "sps") {
+    return {
+      month,
+      value: 0,
+      entregadas: 0,
+      enProcesoPago: 0,
+      otrasPendientes: 0,
+    };
+  }
+  return { month, value: 0 };
+}
+
+function getTrendDateForRecord(record, mode) {
+  if (mode === "ots") {
+    if (!isWorkOrdersRecord(record)) return null;
+    const ot = getRecordOt(record);
+    if (!ot || !/\d/.test(ot)) return null;
+    return (
+      parseTrendDate(getCell(record, ["Marca temporal"]))
+      || parseTrendDate(getCell(record, ["FECHA DE SOLICITUD"]))
+      || parseTrendDate(getCell(record, ["FECHA"]))
+      || null
+    );
+  }
+
+  if (mode === "sps" || mode === "matrix-cost") {
+    if (!isMatrixRecord(record)) return null;
+    if (mode === "matrix-cost" && !isDashboardMatrixCostRecord(record)) return null;
+    return (
+      parseTrendDate(getCell(record, [
+        "Fecha de Recepción de la SP  Nota: si no tiene fecha coloque la de la SP *",
+        "Fecha de Recepcion de la SP",
+        "Fecha de Recepción de la SP",
+      ]))
+      || parseTrendDate(getCell(record, ["Marca temporal"]))
+      || null
+    );
+  }
+
+  return null;
+}
+
+function getOtStatus(record) {
+  return String(getCell(record, ["ESTADO"]) || record.normalized?.status || "").trim();
+}
+
+function getSpStatus(record) {
+  return String(getCell(record, ["Estado Actual de la SP*", "Estado Actual de la SP", "Estado Actual", "Estado"]) || "").trim();
+}
+
+function classifyOtTrendStatus(status) {
+  const text = normalizeText(status);
+  if (!text) return "otros";
+  if (text.includes("materialespendientes") || text.includes("materialpendiente")) return "materialesPendientes";
+  if (text.includes("sinrevisar")) return "sinRevisar";
+  if (text.includes("enproceso")) return "enProceso";
+  if (["terminado", "cerrado", "finalizado", "completado", "revision"].some((item) => text.includes(item))) return "terminado";
+  return "otros";
+}
+
+function classifySpTrendStatus(status) {
+  const text = normalizeText(status);
+  if (!text) return "otrasPendientes";
+  if (text.includes("entregado")) return "entregadas";
+  if (text.includes("procesodepago")) return "enProcesoPago";
+  return "otrasPendientes";
+}
+
+function buildTrendTooltip(point, format, mode) {
+  const parts = [`Total: ${formatTrendValue(point.value, format)}`];
+  if (mode === "ots") {
+    if (point.enProceso) parts.push(`EN PROCESO: ${point.enProceso}`);
+    if (point.sinRevisar) parts.push(`SIN REVISAR: ${point.sinRevisar}`);
+    if (point.materialesPendientes) parts.push(`MATERIALES PENDIENTES: ${point.materialesPendientes}`);
+    if (point.terminado) parts.push(`TERMINADO: ${point.terminado}`);
+    if (point.otros) parts.push(`Otros estado: ${point.otros}`);
+  }
+  if (mode === "sps") {
+    if (point.entregadas) parts.push(`ENTREGADO: ${point.entregadas}`);
+    if (point.enProcesoPago) parts.push(`EN PROCESO DE PAGO: ${point.enProcesoPago}`);
+    if (point.otrasPendientes) parts.push(`Otras pendientes: ${point.otrasPendientes}`);
+  }
+  return parts.join(" · ");
+}
+
+function formatMonthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatTrendMonthLabel(monthKey) {
+  const [year, month] = monthKey.split("-");
+  const names = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  const monthIndex = Number(month) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return monthKey;
+  return `${names[monthIndex]} ${year}`;
+}
+
+function formatTrendValue(value, format) {
+  return format === "money" ? formatMoney(value) : String(Math.round(value));
+}
+
+function buildTrendComparison(points) {
+  if (points.length < 2) return null;
+  const current = points[points.length - 1];
+  const previous = points[points.length - 2];
+  const percentChange = previous.value
+    ? ((current.value - previous.value) / previous.value) * 100
+    : (current.value ? 100 : 0);
+  return { current, previous, percentChange };
+}
+
+function TrendComparison({ comparison, format, valueLabel }) {
+  if (!comparison) return null;
+  const { current, previous, percentChange } = comparison;
+  const trendLabel = percentChange > 0 ? "sube" : percentChange < 0 ? "baja" : "se mantiene";
+  const signedChange = `${percentChange > 0 ? "+" : ""}${percentChange.toFixed(1)}%`;
+  return (
+    <p className="note trend-comparison">
+      Comparación mensual: {formatTrendMonthLabel(current.month)} ({formatTrendValue(current.value, format)} {valueLabel})
+      {" vs "}
+      {formatTrendMonthLabel(previous.month)} ({formatTrendValue(previous.value, format)} {valueLabel})
+      {" · "}
+      Variación: <strong>{signedChange}</strong> ({trendLabel})
+    </p>
+  );
 }
 
 function isWorkOrdersRecord(record) {
@@ -636,27 +874,31 @@ function groupBy(items, keyFn) {
   }, {});
 }
 
-function TrendChart({ points }) {
+function TrendChart({ points, format = "count", mode = "ots" }) {
   if (!points.length) {
     return (
-      <div className="chart">
-        <EmptyState />
+      <div className="chart-wrap">
+        <div className="chart">
+          <EmptyState />
+        </div>
       </div>
     );
   }
   const max = Math.max(...points.map((point) => point.value), 1);
   return (
-    <div className="chart">
-      {points.map((point, index) => (
-        <div
-          className="bar"
-          key={`trend-${point.month}-${index}`}
-          style={{ height: `${Math.max(6, (point.value / max) * 210)}px` }}
-          title={`${point.value} registros · ${formatMoney(point.cost)}`}
-        >
-          <span>{point.month.slice(5)}</span>
-        </div>
-      ))}
+    <div className="chart-wrap">
+      <div className="chart trend-chart" style={{ gridTemplateColumns: `repeat(${points.length}, minmax(56px, 1fr))` }}>
+        {points.map((point, index) => (
+          <div
+            className="bar"
+            key={`trend-${point.month}-${index}`}
+            style={{ height: `${Math.max(6, (point.value / max) * 210)}px` }}
+            title={`${formatTrendMonthLabel(point.month)} · ${buildTrendTooltip(point, format, mode)}`}
+          >
+            <span>{formatTrendMonthLabel(point.month)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

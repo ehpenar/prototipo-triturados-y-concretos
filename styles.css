@@ -662,6 +662,20 @@ textarea {
   padding-top: 14px;
 }
 
+.chart-wrap {
+  overflow-x: auto;
+  margin-bottom: 8px;
+}
+
+.chart.trend-chart {
+  min-height: 260px;
+  min-width: max(100%, 672px);
+  padding-top: 14px;
+  padding-bottom: 52px;
+  grid-auto-columns: minmax(56px, 1fr);
+  gap: 10px;
+}
+
 .bar {
   background: var(--accent);
   border-radius: 5px 5px 0 0;
@@ -679,6 +693,22 @@ textarea {
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.chart.trend-chart .bar span {
+  bottom: -44px;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.trend-comparison {
+  margin-bottom: 8px;
+}
+
+.trend-legend {
+  margin: 16px 0 0;
+  font-size: 12px;
 }
 
 .table-wrap {

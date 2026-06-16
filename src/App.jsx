@@ -61,6 +61,7 @@ const MAX_PERSISTED_OT_CHANGE_STATE_CHARS = 600000;
 const EMAIL_SECTION_SEPARATOR = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
 const GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state_v2";
 const LEGACY_GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state";
+const SYNC_LOAD_CONCURRENCY = 2;
 const WORK_ORDER_SOURCE_KEYWORD = "ORDENES DE TRABAJO TYC";
 const MATRIX_SOURCE_KEYWORD = "Matriz de Seguimiento";
 const WORK_ORDER_FORM_SHEET_KEYWORD = "respuestas de formulario 1";
@@ -147,6 +148,7 @@ function App() {
   const reminderStateRef = useRef(loadStored("operation_ai_reminder_delivery_state", {}));
   const globalStatusStateRef = useRef(loadStored("operation_ai_global_status_state", {}));
   const globalOtChangeStateRef = useRef(loadStored(GLOBAL_OT_CHANGE_STATE_KEY, {}));
+  const lastSyncFingerprintRef = useRef("");
   const debouncedSearch = useDebouncedValue(search);
 
   const filteredRecords = useMemo(() => {
@@ -204,15 +206,15 @@ function App() {
     if (!pollInterval) return undefined;
     const runAutomaticSync = () => syncAll(sources, false, true);
     const timer = setInterval(runAutomaticSync, pollInterval);
-    const syncWhenVisible = () => {
+    const syncOnReturn = () => {
       if (!document.hidden) runAutomaticSync();
     };
-    window.addEventListener("focus", runAutomaticSync);
-    document.addEventListener("visibilitychange", syncWhenVisible);
+    window.addEventListener("focus", syncOnReturn);
+    document.addEventListener("visibilitychange", syncOnReturn);
     return () => {
       clearInterval(timer);
-      window.removeEventListener("focus", runAutomaticSync);
-      document.removeEventListener("visibilitychange", syncWhenVisible);
+      window.removeEventListener("focus", syncOnReturn);
+      document.removeEventListener("visibilitychange", syncOnReturn);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollInterval, sources]);
@@ -543,43 +545,73 @@ function App() {
     const startedAt = nowMs();
     syncInProgressRef.current = true;
     setSyncStatus("Sincronizando...");
-    addLog(automatic ? "Inicio de sincronizacion automatica." : "Inicio de sincronizacion.");
-    const loadedDocuments = [];
-    let successCount = 0;
-    for (const source of sourceList) {
+    addLog(automatic ? "Inicio de sincronizacion automatica (ligera)." : "Inicio de sincronizacion.");
+
+    const loadResults = await mapWithConcurrency(sourceList, SYNC_LOAD_CONCURRENCY, async (source, index) => {
       const sourceId = extractSpreadsheetId(source.url);
       try {
-        const document = await loadSpreadsheet({ ...source, instanceKey: source.instanceKey || `${sourceId}-${loadedDocuments.length}` }, tokenRef, allowAuthPrompt);
-        loadedDocuments.push(document);
-        successCount += 1;
-        addLog(`OK ${source.name}: ${document.sheets.length} pestanas, ${document.records.length} registros.`);
+        const document = await loadSpreadsheet(
+          { ...source, instanceKey: source.instanceKey || `${sourceId}-${index}` },
+          tokenRef,
+          allowAuthPrompt,
+        );
+        return { source, sourceId, document, error: null };
       } catch (error) {
-        addLog(`Error ${source.name}: ${error.message}`);
-        const previousDocument = documents.find((document) => document.id === sourceId || document.source?.name === source.name);
-        if (previousDocument) {
-          loadedDocuments.push(previousDocument);
-          addLog(`Se conservan los ultimos datos cargados de ${source.name}.`);
-        }
+        return { source, sourceId, document: null, error };
+      }
+    });
+
+    const loadedDocuments = [];
+    let successCount = 0;
+    for (const result of loadResults) {
+      if (result.document) {
+        loadedDocuments.push(result.document);
+        successCount += 1;
+        addLog(`OK ${result.source.name}: ${result.document.sheets.length} pestanas, ${result.document.records.length} registros.`);
+        continue;
+      }
+      addLog(`Error ${result.source.name}: ${result.error?.message || "Error desconocido"}`);
+      const previousDocument = documents.find(
+        (document) => document.id === result.sourceId || document.source?.name === result.source.name,
+      );
+      if (previousDocument) {
+        loadedDocuments.push(previousDocument);
+        addLog(`Se conservan los ultimos datos cargados de ${result.source.name}.`);
       }
     }
+
     if (!successCount && !loadedDocuments.length) {
       setSyncStatus(`Sin conexion ${new Date().toLocaleTimeString("es-CO")}`);
       syncInProgressRef.current = false;
       return;
     }
+
+    const fingerprint = buildSyncFingerprint(loadedDocuments);
+    if (automatic && fingerprint && fingerprint === lastSyncFingerprintRef.current) {
+      setSyncStatus(`Sin cambios ${new Date().toLocaleTimeString("es-CO")}`);
+      addLog(`Sincronizacion automatica sin cambios (${formatDuration(startedAt)}).`);
+      syncInProgressRef.current = false;
+      return;
+    }
+
     const nextRecords = loadedDocuments.flatMap((document) => document.records);
     await yieldToBrowser();
     const nextRelations = detectRelations(nextRecords);
     await yieldToBrowser();
-    await syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt);
+    await syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt, automatic);
     await yieldToBrowser();
-    await syncFinancialSummary(loadedDocuments, allowAuthPrompt);
-    await yieldToBrowser();
+    if (!automatic) {
+      await syncFinancialSummary(loadedDocuments, allowAuthPrompt);
+      await yieldToBrowser();
+    } else {
+      addLog("Resumen financiero omitido en sincronizacion automatica.");
+    }
     const nextAlerts = detectAnomalies(nextRecords, nextRelations);
     setDocuments(loadedDocuments);
     setRecords(nextRecords);
     setRelations(nextRelations);
     setAlerts(nextAlerts);
+    lastSyncFingerprintRef.current = fingerprint;
     setSyncStatus(`${successCount ? "Actualizado" : "Datos conservados"} ${new Date().toLocaleTimeString("es-CO")}`);
     addLog(`Rendimiento: sincronizacion completada en ${formatDuration(startedAt)}.`);
     syncInProgressRef.current = false;
@@ -613,7 +645,7 @@ function App() {
     }
   }
 
-  async function syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt = false) {
+  async function syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt = false, automatic = false) {
     const summaryDocument = findFinancialSummaryDocument(loadedDocuments);
     if (!summaryDocument) {
       addLog("Correos vinculados omitidos: no se encontro HOJA RESUMEN FINANCIERO OTS.");
@@ -621,12 +653,12 @@ function App() {
     }
     const linkedSheet = summaryDocument.sheets.find((sheet) => normalizeText(sheet.title) === normalizeText(LINKED_EMAILS_SHEET));
     if (!linkedSheet) {
-      await persistLinkedEmailConfig(notificationConfig, allowAuthPrompt);
+      if (!automatic) await persistLinkedEmailConfig(notificationConfig, allowAuthPrompt);
       return;
     }
     const linkedRecord = summaryDocument.records.find((record) => normalizeText(record.sheetName) === normalizeText(LINKED_EMAILS_SHEET));
     if (!linkedRecord) {
-      await persistLinkedEmailConfig(notificationConfig, allowAuthPrompt);
+      if (!automatic) await persistLinkedEmailConfig(notificationConfig, allowAuthPrompt);
       return;
     }
     const nextConfig = buildNotificationConfigFromLinkedEmails(notificationConfig, linkedRecord);
@@ -879,6 +911,47 @@ function yieldToBrowser() {
     }
     setTimeout(resolve, 0);
   });
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  if (!items?.length) return [];
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, limit), items.length) }, () => worker()),
+  );
+  return results;
+}
+
+function buildSyncFingerprint(documents) {
+  if (!documents?.length) return "";
+  const parts = documents.map((document) => {
+    const recordSignature = (document.records || [])
+      .map((record) => `${record.uid}:${record.rowNumber}:${record.text}`)
+      .sort()
+      .join("\u001e");
+    return `${document.id}:${document.records?.length || 0}:${hashString(recordSignature)}`;
+  });
+  parts.sort();
+  return hashString(parts.join("\u001f"));
+}
+
+function hashString(value) {
+  const text = String(value || "");
+  let hash = 5381;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ text.charCodeAt(index);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function getConfiguredEmailRecipients(config) {

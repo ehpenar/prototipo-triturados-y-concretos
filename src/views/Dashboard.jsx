@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useMemo, useState } from "react";
+import React, { Suspense, lazy, useMemo, useState, useDeferredValue } from "react";
 import { sum, cleanKey, formatMoney, normalizeText, parseMoney, parseDate } from "../utils/helpers.js";
 import { EmptyState } from "../components/EmptyState.jsx";
 import { useDeferredMount } from "../components/dashboard/useDeferredMount.js";
@@ -21,6 +21,7 @@ const WORK_ORDERS_SPREADSHEET_ID = "1NUd2guWTtB1qEGUQ4i04kuARnU8Bu7trkJRhiSs79ns
 const WORK_ORDERS_SHEET_ID = "1862269386";
 const WORK_ORDERS_SOURCE_NAME = "ORDENES DE TRABAJO TYC";
 const WORK_ORDERS_SHEET_NAME = "copia de prueba respuestas de formulario 1";
+const HEADER_LOOKUP_CACHE = new WeakMap();
 
 const KPI_SOURCE_DETAILS = {
   records: "Fuente: todos los documentos sincronizados desde Fuentes.",
@@ -113,11 +114,18 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
   const isMonthFilter = getKpiMonthMatch(kpiTimeFilter) !== null;
   const isAlertsMonthFilter = getOpsMonthMatch(alertsTimeFilter) !== null;
   const isRankingMonthFilter = getOpsMonthMatch(rankingTimeFilter) !== null;
+  const deferredKpiTimeFilter = useDeferredValue(kpiTimeFilter);
+  const deferredKpiYearFilter = useDeferredValue(kpiYearFilter);
+  const deferredAlertsTimeFilter = useDeferredValue(alertsTimeFilter);
+  const deferredAlertsYearFilter = useDeferredValue(alertsYearFilter);
+  const deferredRankingTimeFilter = useDeferredValue(rankingTimeFilter);
+  const deferredRankingYearFilter = useDeferredValue(rankingYearFilter);
   const operationalRecords = sourceRecords || records;
   const availableYears = useMemo(() => buildAvailableYears(records), [records]);
+  const operationalAvailableYears = useMemo(() => buildOpsAvailableYears(operationalRecords), [operationalRecords]);
   const timeFilteredRecords = useMemo(
-    () => filterRecordsByKpiTimeRange(records, kpiTimeFilter, kpiYearFilter),
-    [records, kpiTimeFilter, kpiYearFilter],
+    () => filterRecordsByKpiTimeRange(records, deferredKpiTimeFilter, deferredKpiYearFilter),
+    [records, deferredKpiTimeFilter, deferredKpiYearFilter],
   );
   const selectedTimeFilter = KPI_TIME_FILTER_OPTIONS.find((option) => option.value === kpiTimeFilter) || KPI_TIME_FILTER_OPTIONS[0];
   const selectedTimeLabel = isMonthFilter ? `${selectedTimeFilter.label} ${kpiYearFilter}` : selectedTimeFilter.label;
@@ -125,34 +133,36 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
     () => buildDashboardMetrics(records, timeFilteredRecords),
     [records, timeFilteredRecords],
   );
-  const rankingAvailableYears = useMemo(() => buildOpsAvailableYears(operationalRecords), [operationalRecords]);
   const rankingFilteredRecords = useMemo(
-    () => filterRecordsByOpsTimeRange(operationalRecords, rankingTimeFilter, rankingYearFilter),
-    [operationalRecords, rankingTimeFilter, rankingYearFilter],
+    () => filterRecordsByOpsTimeRange(operationalRecords, deferredRankingTimeFilter, deferredRankingYearFilter),
+    [operationalRecords, deferredRankingTimeFilter, deferredRankingYearFilter],
   );
   const rankingTimeLabel = formatOpsPeriodDetail(rankingTimeFilter, rankingYearFilter);
-  const otMetrics = useMemo(() => buildOtMetrics(rankingFilteredRecords), [rankingFilteredRecords]);
-  const rankingsByMode = useMemo(
-    () => ({
-      cost: buildOperationalRanking(rankingFilteredRecords, "cost", otMetrics),
-      equipment: buildOperationalRanking(rankingFilteredRecords, "equipment", otMetrics),
-      people: buildOperationalRanking(rankingFilteredRecords, "people", otMetrics),
-      providers: buildOperationalRanking(rankingFilteredRecords, "providers", otMetrics),
-    }),
-    [rankingFilteredRecords, otMetrics],
+  const otMetrics = useMemo(
+    () => (rankingMode === "cost" ? buildOtMetrics(rankingFilteredRecords) : null),
+    [rankingFilteredRecords, rankingMode],
   );
-  const alertsAvailableYears = useMemo(() => buildOpsAvailableYears(operationalRecords), [operationalRecords]);
+  const activeRanking = useMemo(
+    () => buildOperationalRanking(
+      rankingFilteredRecords,
+      rankingMode,
+      rankingMode === "cost" ? otMetrics : null,
+    ),
+    [rankingFilteredRecords, rankingMode, otMetrics],
+  );
   const alertsFilteredRecords = useMemo(
-    () => filterRecordsByOpsTimeRange(operationalRecords, alertsTimeFilter, alertsYearFilter),
-    [operationalRecords, alertsTimeFilter, alertsYearFilter],
+    () => filterRecordsByOpsTimeRange(operationalRecords, deferredAlertsTimeFilter, deferredAlertsYearFilter),
+    [operationalRecords, deferredAlertsTimeFilter, deferredAlertsYearFilter],
   );
   const alertsTimeLabel = getOpsTimeFilterLabel(alertsTimeFilter, alertsYearFilter);
   const smartAlerts = useMemo(
     () => buildDashboardSmartAlerts(alertsFilteredRecords),
     [alertsFilteredRecords],
   );
-  const operationalTrend = useMemo(() => buildOperationalTrend(records, trendMode), [records, trendMode]);
+  const allOperationalTrends = useMemo(() => buildAllOperationalTrends(records), [records]);
+  const operationalTrend = allOperationalTrends[trendMode] || allOperationalTrends.ots;
   const selectedTrendMode = TREND_MODE_OPTIONS.find((option) => option.value === trendMode) || TREND_MODE_OPTIONS[0];
+  const { isReady: showTrends, sentinelRef: trendsSentinelRef } = useDeferredMount();
   const { isReady: showOperations, sentinelRef: operationsSentinelRef } = useDeferredMount();
 
   return (
@@ -190,17 +200,17 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
         </div>
       </section>
       <div className="kpi-grid">
-        <Kpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} source={KPI_SOURCE_DETAILS.records} />
-        <Kpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en ORDENES DE TRABAJO TYC" source={KPI_SOURCE_DETAILS.workOrders} />
-        <Kpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint={`Compras realizadas (VALOR COMPRA) · ${selectedTimeLabel}`} source={KPI_SOURCE_DETAILS.cost} />
-        <Kpi
+        <MemoKpi label="Registros" value={records.length} hint={`${documents.length} documentos conectados`} source={KPI_SOURCE_DETAILS.records} />
+        <MemoKpi label="Filas OT" value={dashboardMetrics.workOrderRows} hint="Columna OT en ORDENES DE TRABAJO TYC" source={KPI_SOURCE_DETAILS.workOrders} />
+        <MemoKpi label="Costo detectado" value={formatMoney(dashboardMetrics.totalCost)} hint={`Compras realizadas (VALOR COMPRA) · ${selectedTimeLabel}`} source={KPI_SOURCE_DETAILS.cost} />
+        <MemoKpi
           label="Horas"
           value={`${dashboardMetrics.totalHours.toFixed(1)} horas`}
           hint={`Horas reconocidas en reportes · ${selectedTimeLabel}`}
           source={KPI_SOURCE_DETAILS.hours}
           extraDetail={`Valor Mano de Obra: ${formatMoney(dashboardMetrics.totalLaborValue)}`}
         />
-        <Kpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" source={KPI_SOURCE_DETAILS.equipment} />
+        <MemoKpi label="Equipos" value={dashboardMetrics.equipmentCount} hint="Activos detectados dinamicamente" source={KPI_SOURCE_DETAILS.equipment} />
       </div>
       <div className="split">
         <section className="panel">
@@ -223,7 +233,7 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
               <label>
                 Año
                 <select value={alertsYearFilter} onChange={(event) => setAlertsYearFilter(Number(event.target.value))}>
-                  {alertsAvailableYears.map((year) => (
+                  {operationalAvailableYears.map((year) => (
                     <option key={`alerts-year-${year}`} value={year}>
                       {year}
                     </option>
@@ -233,7 +243,7 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
             )}
           </div>
           <SourceNote text={ALERTS_SOURCE_DETAIL} />
-          <Alerts alerts={smartAlerts} />
+          <MemoAlerts alerts={smartAlerts} />
         </section>
         <section className="panel">
           <div className="panel-head">
@@ -263,7 +273,7 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
               <label>
                 Año
                 <select value={rankingYearFilter} onChange={(event) => setRankingYearFilter(Number(event.target.value))}>
-                  {rankingAvailableYears.map((year) => (
+                  {operationalAvailableYears.map((year) => (
                     <option key={`ranking-year-${year}`} value={year}>
                       {year}
                     </option>
@@ -272,9 +282,11 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
               </label>
             )}
           </div>
-          <Rankings ranking={rankingsByMode[rankingMode] || []} mode={rankingMode} periodLabel={rankingTimeLabel} />
+          <MemoRankings ranking={activeRanking} mode={rankingMode} periodLabel={rankingTimeLabel} />
         </section>
       </div>
+      <div ref={trendsSentinelRef} style={{ height: 1, width: "100%" }} aria-hidden="true" />
+      {showTrends ? (
       <section className="panel">
         <div className="panel-head">
           <h2>Tendencias operacionales</h2>
@@ -290,14 +302,19 @@ export function Dashboard({ documents, records, sourceRecords, rankingMode, setR
           {selectedTrendMode.subtitle} · últimos 12 meses calendario
         </p>
         <SourceNote text={selectedTrendMode.sourceDetail} />
-        <TrendComparison comparison={operationalTrend.comparison} format={selectedTrendMode.format} valueLabel={selectedTrendMode.valueLabel} />
-        <TrendChart format={selectedTrendMode.format} mode={trendMode} points={operationalTrend.points} />
+        <MemoTrendComparison comparison={operationalTrend.comparison} format={selectedTrendMode.format} valueLabel={selectedTrendMode.valueLabel} />
+        <MemoTrendChart format={selectedTrendMode.format} mode={trendMode} points={operationalTrend.points} />
         <p className="muted trend-legend">
           Eje: mes/año · Altura: {selectedTrendMode.format === "money" ? "suma de VALOR COMPRA" : `cantidad de ${selectedTrendMode.valueLabel}`}
           {trendMode === "ots" ? " · Pasa el cursor sobre cada barra para ver EN PROCESO, SIN REVISAR, MATERIALES PENDIENTES, etc." : ""}
           {trendMode === "sps" ? " · Pasa el cursor sobre cada barra para ver ENTREGADO, EN PROCESO DE PAGO u otras pendientes" : ""}
         </p>
       </section>
+      ) : (
+        <section className="panel">
+          <p className="muted">Las tendencias operacionales se cargan al acercarte a esta sección.</p>
+        </section>
+      )}
       <div ref={operationsSentinelRef} style={{ height: 1, width: "100%" }} aria-hidden="true" />
       {showOperations ? (
         <Suspense fallback={<section className="panel"><p className="muted">Cargando herramientas operativas...</p></section>}>
@@ -345,31 +362,68 @@ function buildDashboardMetrics(allRecords, timeFilteredRecords) {
   };
 }
 
-function buildOperationalTrend(records, mode) {
-  const trendByMonth = new Map();
+function buildAllOperationalTrends(records) {
+  const trendByMode = {
+    ots: new Map(),
+    sps: new Map(),
+    "matrix-cost": new Map(),
+  };
 
-  records.forEach((record) => {
-    const date = getTrendDateForRecord(record, mode);
-    if (!date) return;
-
-    const month = formatMonthKey(date);
-    const current = trendByMonth.get(month) || createTrendBucket(mode, month);
-    if (mode === "matrix-cost") {
-      current.value += getMatrixPurchaseValue(record);
-    } else if (mode === "sps") {
-      current.value += 1;
-      const spBucket = classifySpTrendStatus(getSpStatus(record));
-      current[spBucket] += 1;
-    } else {
-      current.value += 1;
-      const otBucket = classifyOtTrendStatus(getOtStatus(record));
-      current[otBucket] += 1;
+  (records || []).forEach((record) => {
+    if (isWorkOrdersRecord(record)) {
+      const ot = getRecordOt(record);
+      if (!ot || !/\d/.test(ot)) return;
+      const date = (
+        parseTrendDate(getCell(record, ["Marca temporal"]))
+        || parseTrendDate(getCell(record, ["FECHA DE SOLICITUD"]))
+        || parseTrendDate(getCell(record, ["FECHA"]))
+      );
+      if (date) accumulateTrendRecord(trendByMode.ots, "ots", date, record);
     }
-    trendByMonth.set(month, current);
+
+    if (isMatrixRecord(record)) {
+      const date = (
+        parseTrendDate(getCell(record, [
+          "Fecha de Recepción de la SP  Nota: si no tiene fecha coloque la de la SP *",
+          "Fecha de Recepcion de la SP",
+          "Fecha de Recepción de la SP",
+        ]))
+        || parseTrendDate(getCell(record, ["Marca temporal"]))
+      );
+      if (!date) return;
+      accumulateTrendRecord(trendByMode.sps, "sps", date, record);
+      if (isDashboardMatrixCostRecord(record)) {
+        accumulateTrendRecord(trendByMode["matrix-cost"], "matrix-cost", date, record);
+      }
+    }
   });
 
-  const points = buildTrendMonthSeries(trendByMonth, mode);
+  return {
+    ots: finalizeOperationalTrend(trendByMode.ots, "ots"),
+    sps: finalizeOperationalTrend(trendByMode.sps, "sps"),
+    "matrix-cost": finalizeOperationalTrend(trendByMode["matrix-cost"], "matrix-cost"),
+  };
+}
 
+function accumulateTrendRecord(trendByMonth, mode, date, record) {
+  const month = formatMonthKey(date);
+  const current = trendByMonth.get(month) || createTrendBucket(mode, month);
+  if (mode === "matrix-cost") {
+    current.value += getMatrixPurchaseValue(record);
+  } else if (mode === "sps") {
+    current.value += 1;
+    const spBucket = classifySpTrendStatus(getSpStatus(record));
+    current[spBucket] += 1;
+  } else {
+    current.value += 1;
+    const otBucket = classifyOtTrendStatus(getOtStatus(record));
+    current[otBucket] += 1;
+  }
+  trendByMonth.set(month, current);
+}
+
+function finalizeOperationalTrend(trendByMonth, mode) {
+  const points = buildTrendMonthSeries(trendByMonth, mode);
   return {
     points,
     comparison: buildTrendComparison(points),
@@ -438,36 +492,6 @@ function createTrendBucket(mode, month) {
     };
   }
   return { month, value: 0 };
-}
-
-function getTrendDateForRecord(record, mode) {
-  if (mode === "ots") {
-    if (!isWorkOrdersRecord(record)) return null;
-    const ot = getRecordOt(record);
-    if (!ot || !/\d/.test(ot)) return null;
-    return (
-      parseTrendDate(getCell(record, ["Marca temporal"]))
-      || parseTrendDate(getCell(record, ["FECHA DE SOLICITUD"]))
-      || parseTrendDate(getCell(record, ["FECHA"]))
-      || null
-    );
-  }
-
-  if (mode === "sps" || mode === "matrix-cost") {
-    if (!isMatrixRecord(record)) return null;
-    if (mode === "matrix-cost" && !isDashboardMatrixCostRecord(record)) return null;
-    return (
-      parseTrendDate(getCell(record, [
-        "Fecha de Recepción de la SP  Nota: si no tiene fecha coloque la de la SP *",
-        "Fecha de Recepcion de la SP",
-        "Fecha de Recepción de la SP",
-      ]))
-      || parseTrendDate(getCell(record, ["Marca temporal"]))
-      || null
-    );
-  }
-
-  return null;
 }
 
 function getOtStatus(record) {
@@ -555,6 +579,8 @@ function TrendComparison({ comparison, format, valueLabel }) {
   );
 }
 
+const MemoTrendComparison = React.memo(TrendComparison);
+
 function isWorkOrdersRecord(record) {
   const isTargetDocument =
     record.sourceId === WORK_ORDERS_SPREADSHEET_ID ||
@@ -621,6 +647,8 @@ function Kpi({ label, value, hint, source, extraDetail }) {
   );
 }
 
+const MemoKpi = React.memo(Kpi);
+
 function SourceNote({ text }) {
   return <p className="source-note">{text}</p>;
 }
@@ -639,20 +667,22 @@ function Alerts({ alerts }) {
   );
 }
 
+const MemoAlerts = React.memo(Alerts);
+
 function Rankings({ ranking, mode, periodLabel = "" }) {
   const sourceDetail = RANKING_SOURCE_DETAILS[mode] || RANKING_SOURCE_DETAILS.cost;
 
   if (!ranking.length) {
     return (
       <>
-        <RankingSourceCard sourceDetail={sourceDetail} periodLabel={periodLabel} />
+        <MemoRankingSourceCard sourceDetail={sourceDetail} periodLabel={periodLabel} />
         <EmptyState />
       </>
     );
   }
   return (
     <>
-      <RankingSourceCard sourceDetail={sourceDetail} periodLabel={periodLabel} />
+      <MemoRankingSourceCard sourceDetail={sourceDetail} periodLabel={periodLabel} />
       <div className="list dashboard-scroll-list">
         {ranking.map((item) => (
           <article className="item" key={`ranking-${mode}-${item.key}`}>
@@ -669,6 +699,8 @@ function Rankings({ ranking, mode, periodLabel = "" }) {
   );
 }
 
+const MemoRankings = React.memo(Rankings);
+
 function RankingSourceCard({ sourceDetail, periodLabel }) {
   return (
     <div className="dashboard-source-card">
@@ -679,6 +711,8 @@ function RankingSourceCard({ sourceDetail, periodLabel }) {
     </div>
   );
 }
+
+const MemoRankingSourceCard = React.memo(RankingSourceCard);
 
 function buildOperationalRanking(records, mode, otMetrics = null) {
   const metrics = otMetrics || buildOtMetrics(records);
@@ -1059,18 +1093,38 @@ function getBillingCostValue(record) {
 
 function getCell(record, names, containsNames = []) {
   if (!record) return "";
-  for (const name of names) {
-    const header = record.headers?.find((item) => normalizeHeader(item) === normalizeHeader(name));
-    const value = header ? record.cells?.[header] : "";
-    if (header && value !== undefined && String(value || "").trim()) return value;
-  }
-  for (const name of containsNames) {
-    const target = normalizeHeader(name);
-    const header = record.headers?.find((item) => normalizeHeader(item).includes(target));
-    const value = header ? record.cells?.[header] : "";
-    if (header && value !== undefined && String(value || "").trim()) return value;
+  const lookup = getHeaderLookup(record);
+  if (lookup) {
+    for (const name of names) {
+      const header = lookup.byNormalizedHeader.get(normalizeHeader(name));
+      const value = header ? record.cells?.[header] : "";
+      if (header && value !== undefined && String(value || "").trim()) return value;
+    }
+    for (const name of containsNames) {
+      const target = normalizeHeader(name);
+      const match = lookup.normalizedHeaders.find((item) => item.normalized.includes(target));
+      const value = match ? record.cells?.[match.header] : "";
+      if (match && value !== undefined && String(value || "").trim()) return value;
+    }
   }
   return "";
+}
+
+function getHeaderLookup(record) {
+  const headers = record?.headers;
+  if (!headers?.length) return null;
+  let cached = HEADER_LOOKUP_CACHE.get(record);
+  if (cached) return cached;
+  const byNormalizedHeader = new Map();
+  const normalizedHeaders = [];
+  for (const header of headers) {
+    const normalized = normalizeHeader(header);
+    if (!byNormalizedHeader.has(normalized)) byNormalizedHeader.set(normalized, header);
+    normalizedHeaders.push({ header, normalized });
+  }
+  cached = { byNormalizedHeader, normalizedHeaders };
+  HEADER_LOOKUP_CACHE.set(record, cached);
+  return cached;
 }
 
 function normalizeHeader(value) {
@@ -1167,3 +1221,5 @@ function TrendChart({ points, format = "count", mode = "ots" }) {
     </div>
   );
 }
+
+const MemoTrendChart = React.memo(TrendChart);

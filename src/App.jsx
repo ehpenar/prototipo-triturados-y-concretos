@@ -62,6 +62,7 @@ const EMAIL_SECTION_SEPARATOR = "━━━━━━━━━━━━━━━�
 const GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state_v2";
 const LEGACY_GLOBAL_OT_CHANGE_STATE_KEY = "operation_ai_global_ot_change_state";
 const WORK_ORDER_SOURCE_KEYWORD = "ORDENES DE TRABAJO TYC";
+const MATRIX_SOURCE_KEYWORD = "Matriz de Seguimiento";
 const WORK_ORDER_FORM_SHEET_KEYWORD = "respuestas de formulario 1";
 const WORK_ORDER_DESCRIPTION_ALIASES = [
   "DESCRIPCIÓN GENERAL DEL FALLO O DE LA SOLICITUD",
@@ -294,7 +295,7 @@ function App() {
       const pendingChanges = pending.pendingIndexes.map((index) => enrichedChanges[index]);
       const recipients = getConfiguredEmailRecipients(notificationConfig);
       let sentIndexes = new Set();
-      if (recipients) {
+      if (canSendChangeNotifications(pendingChanges, recipients)) {
         sentIndexes = await sendChangeNotifications({
           changes: pendingChanges,
           recipients,
@@ -339,7 +340,7 @@ function App() {
       const pendingChanges = pending.pendingIndexes.map((index) => enrichedChanges[index]);
       const recipients = getConfiguredEmailRecipients(notificationConfig);
       let sentIndexes = new Set();
-      if (recipients) {
+      if (canSendChangeNotifications(pendingChanges, recipients)) {
         sentIndexes = await sendChangeNotifications({
           changes: pendingChanges,
           recipients,
@@ -360,7 +361,7 @@ function App() {
 
   async function sendChangeNotifications({
     changes,
-    recipients,
+    recipients: globalRecipients,
     getSubject,
     getMessage,
     digestSubject,
@@ -369,10 +370,12 @@ function App() {
   }) {
     const sentIndexes = new Set();
     if (changes.length > CHANGE_DIGEST_THRESHOLD) {
+      const digestRecipients = buildDigestNotificationRecipients(changes, globalRecipients);
+      if (!digestRecipients) return sentIndexes;
       try {
         await sendGmailMessage({
           from: notificationConfig.senderEmail,
-          to: recipients,
+          to: digestRecipients,
           subject: digestSubject,
           message: buildChangeDigestMessage(digestTitle, changes, getMessage),
         }, tokenRef);
@@ -385,6 +388,11 @@ function App() {
     }
 
     for (const [index, change] of changes.entries()) {
+      const recipients = resolveChangeNotificationRecipients(change, globalRecipients);
+      if (!recipients) {
+        addLog(`${logLabel} omitido sin destinatario: ${change.ot || change.recordLabel}.`);
+        continue;
+      }
       try {
         await sendGmailMessage({
           from: notificationConfig.senderEmail,
@@ -392,7 +400,12 @@ function App() {
           subject: getSubject(change),
           message: getMessage(change),
         }, tokenRef);
-        addLog(`${logLabel} enviado por email: ${change.ot || change.recordLabel}.`);
+        const assignedEmail = resolveAssignedRowEmail(change);
+        addLog(
+          assignedEmail
+            ? `${logLabel} enviado por email a ${recipients} (responsable fila: ${assignedEmail}): ${change.ot || change.recordLabel}.`
+            : `${logLabel} enviado por email: ${change.ot || change.recordLabel}.`,
+        );
         sentIndexes.add(index);
       } catch (error) {
         addLog(`Error enviando ${logLabel}: ${error.message}`);
@@ -959,6 +972,47 @@ function uniqueEmails(emails) {
     seen.add(key);
     return true;
   });
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
+function getChangeSourceName(change) {
+  return change?.sourceName || change?.documentName || extractDocumentFromRecordLabel(change?.recordLabel) || "";
+}
+
+function isAssignedEmailChangeSource(change) {
+  const sourceName = normalizeText(getChangeSourceName(change));
+  return sourceName.includes(normalizeText(MATRIX_SOURCE_KEYWORD))
+    || sourceName.includes(normalizeText(WORK_ORDER_SOURCE_KEYWORD));
+}
+
+function resolveAssignedRowEmail(change) {
+  if (!isAssignedEmailChangeSource(change)) return "";
+  const rowEmail = String(change?.userResponsible || "").trim();
+  return isValidEmail(rowEmail) ? rowEmail : "";
+}
+
+function resolveChangeNotificationRecipients(change, globalRecipients) {
+  const recipients = uniqueEmails([
+    ...parseEmailList(globalRecipients),
+    resolveAssignedRowEmail(change),
+  ]);
+  return recipients.join(", ");
+}
+
+function buildDigestNotificationRecipients(changes, globalRecipients) {
+  const recipients = uniqueEmails([
+    ...parseEmailList(globalRecipients),
+    ...(changes || []).map(resolveAssignedRowEmail).filter(Boolean),
+  ]);
+  return recipients.join(", ");
+}
+
+function canSendChangeNotifications(changes, globalRecipients) {
+  if (String(globalRecipients || "").trim()) return true;
+  return (changes || []).some((change) => Boolean(resolveAssignedRowEmail(change)));
 }
 
 function cleanupLegacyOtChangeState() {

@@ -30,6 +30,13 @@ import {
 } from "./utils/financialSummary.js";
 // Import Modular Views
 import { useDebouncedValue } from "./hooks/useDebouncedValue.js";
+import {
+  formatSyncCacheStatus,
+  persistSyncCache,
+  readValidSyncCache,
+} from "./utils/syncCache.js";
+
+const bootSyncCache = readValidSyncCache(loadSources());
 
 const Dashboard = lazy(() => import("./views/Dashboard.jsx").then((module) => ({ default: module.Dashboard })));
 const Records = lazy(() => import("./views/Records.jsx").then((module) => ({ default: module.Records })));
@@ -109,11 +116,16 @@ const TRACKED_CHANGE_FIELD_KEYWORDS = [
 
 function App() {
   const [sources, setSources] = useState(loadSources);
-  const [documents, setDocuments] = useState([]);
-  const [records, setRecords] = useState([]);
-  const [relations, setRelations] = useState([]);
-  const [alerts, setAlerts] = useState([]);
-  const [syncStatus, setSyncStatus] = useState("Sin sincronizar");
+  const [documents, setDocuments] = useState(() => bootSyncCache?.documents || []);
+  const [records, setRecords] = useState(() => bootSyncCache?.records || []);
+  const [relations, setRelations] = useState(() => bootSyncCache?.relations || []);
+  const [alerts, setAlerts] = useState(() => bootSyncCache?.alerts || []);
+  const [syncStatus, setSyncStatus] = useState(() =>
+    bootSyncCache?.syncedAt
+      ? `${formatSyncCacheStatus(bootSyncCache.syncedAt)} · verificando...`
+      : "Sin sincronizar",
+  );
+  const [syncProgress, setSyncProgress] = useState(null);
   const [syncLog, setSyncLog] = useState([]);
   const [activeView, setActiveView] = useState("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -148,7 +160,8 @@ function App() {
   const reminderStateRef = useRef(loadStored("operation_ai_reminder_delivery_state", {}));
   const globalStatusStateRef = useRef(loadStored("operation_ai_global_status_state", {}));
   const globalOtChangeStateRef = useRef(loadStored(GLOBAL_OT_CHANGE_STATE_KEY, {}));
-  const lastSyncFingerprintRef = useRef("");
+  const lastSyncFingerprintRef = useRef(bootSyncCache?.fingerprint || "");
+  const suppressChangeDetectionUntilLiveSyncRef = useRef(Boolean(bootSyncCache?.records?.length));
   const debouncedSearch = useDebouncedValue(search);
 
   const filteredRecords = useMemo(() => {
@@ -228,6 +241,7 @@ function App() {
   }, [notes, records, notificationConfig]);
 
   useEffect(() => {
+    if (suppressChangeDetectionUntilLiveSyncRef.current) return;
     processGlobalStatusChanges();
     processGlobalOtFieldChanges();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -544,77 +558,113 @@ function App() {
     }
     const startedAt = nowMs();
     syncInProgressRef.current = true;
-    setSyncStatus("Sincronizando...");
+    let recordsUpdatedThisSync = false;
+    setSyncProgress({ loaded: 0, total: sourceList.length, current: "" });
+    setSyncStatus(`Sincronizando 0/${sourceList.length} hojas...`);
     addLog(automatic ? "Inicio de sincronizacion automatica (ligera)." : "Inicio de sincronizacion.");
+    if (suppressChangeDetectionUntilLiveSyncRef.current && !automatic) {
+      addLog("Mostrando datos locales mientras se verifica Google Sheets.");
+    }
 
-    const loadResults = await mapWithConcurrency(sourceList, SYNC_LOAD_CONCURRENCY, async (source, index) => {
-      const sourceId = extractSpreadsheetId(source.url);
-      try {
-        const document = await loadSpreadsheet(
-          { ...source, instanceKey: source.instanceKey || `${sourceId}-${index}` },
-          tokenRef,
-          allowAuthPrompt,
-        );
-        return { source, sourceId, document, error: null };
-      } catch (error) {
-        return { source, sourceId, document: null, error };
-      }
-    });
-
-    const loadedDocuments = [];
-    let successCount = 0;
-    for (const result of loadResults) {
-      if (result.document) {
-        loadedDocuments.push(result.document);
-        successCount += 1;
-        addLog(`OK ${result.source.name}: ${result.document.sheets.length} pestanas, ${result.document.records.length} registros.`);
-        continue;
-      }
-      addLog(`Error ${result.source.name}: ${result.error?.message || "Error desconocido"}`);
-      const previousDocument = documents.find(
-        (document) => document.id === result.sourceId || document.source?.name === result.source.name,
+    try {
+      const loadResults = await mapWithConcurrency(
+        sourceList,
+        SYNC_LOAD_CONCURRENCY,
+        async (source, index) => {
+          const sourceId = extractSpreadsheetId(source.url);
+          try {
+            const document = await loadSpreadsheet(
+              { ...source, instanceKey: source.instanceKey || `${sourceId}-${index}` },
+              tokenRef,
+              allowAuthPrompt,
+            );
+            return { source, sourceId, document, error: null };
+          } catch (error) {
+            return { source, sourceId, document: null, error };
+          }
+        },
+        (loaded, total, source) => {
+          setSyncProgress({ loaded, total, current: source?.name || "" });
+          setSyncStatus(
+            source?.name
+              ? `Sincronizando ${loaded}/${total}: ${source.name}`
+              : `Sincronizando ${loaded}/${total} hojas...`,
+          );
+        },
       );
-      if (previousDocument) {
-        loadedDocuments.push(previousDocument);
-        addLog(`Se conservan los ultimos datos cargados de ${result.source.name}.`);
+
+      const loadedDocuments = [];
+      let successCount = 0;
+      for (const result of loadResults) {
+        if (result.document) {
+          loadedDocuments.push(result.document);
+          successCount += 1;
+          addLog(`OK ${result.source.name}: ${result.document.sheets.length} pestanas, ${result.document.records.length} registros.`);
+          continue;
+        }
+        addLog(`Error ${result.source.name}: ${result.error?.message || "Error desconocido"}`);
+        const previousDocument = documents.find(
+          (document) => document.id === result.sourceId || document.source?.name === result.source.name,
+        );
+        if (previousDocument) {
+          loadedDocuments.push(previousDocument);
+          addLog(`Se conservan los ultimos datos cargados de ${result.source.name}.`);
+        }
+      }
+
+      if (!successCount && !loadedDocuments.length) {
+        setSyncStatus(`Sin conexion ${new Date().toLocaleTimeString("es-CO")}`);
+        return;
+      }
+
+      const fingerprint = buildSyncFingerprint(loadedDocuments);
+      if (automatic && fingerprint && fingerprint === lastSyncFingerprintRef.current) {
+        setSyncStatus(`Sin cambios ${new Date().toLocaleTimeString("es-CO")}`);
+        addLog(`Sincronizacion automatica sin cambios (${formatDuration(startedAt)}).`);
+        return;
+      }
+
+      const nextRecords = loadedDocuments.flatMap((document) => document.records);
+      await yieldToBrowser();
+      const nextRelations = detectRelations(nextRecords);
+      await yieldToBrowser();
+      await syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt, automatic);
+      await yieldToBrowser();
+      if (!automatic) {
+        await syncFinancialSummary(loadedDocuments, allowAuthPrompt);
+        await yieldToBrowser();
+      } else {
+        addLog("Resumen financiero omitido en sincronizacion automatica.");
+      }
+      const nextAlerts = detectAnomalies(nextRecords, nextRelations);
+      suppressChangeDetectionUntilLiveSyncRef.current = false;
+      setDocuments(loadedDocuments);
+      setRecords(nextRecords);
+      setRelations(nextRelations);
+      setAlerts(nextAlerts);
+      recordsUpdatedThisSync = true;
+      lastSyncFingerprintRef.current = fingerprint;
+      const cacheSaved = persistSyncCache({
+        documents: loadedDocuments,
+        records: nextRecords,
+        relations: nextRelations,
+        alerts: nextAlerts,
+        fingerprint,
+        sources: sourceList,
+      });
+      if (cacheSaved) addLog("Cache local actualizada para apertura rapida.");
+      setSyncStatus(`${successCount ? "Actualizado" : "Datos conservados"} ${new Date().toLocaleTimeString("es-CO")}`);
+      addLog(`Rendimiento: sincronizacion completada en ${formatDuration(startedAt)}.`);
+    } finally {
+      setSyncProgress(null);
+      syncInProgressRef.current = false;
+      const wasSuppressing = suppressChangeDetectionUntilLiveSyncRef.current;
+      suppressChangeDetectionUntilLiveSyncRef.current = false;
+      if (wasSuppressing && !recordsUpdatedThisSync) {
+        processGlobalStatusChanges();
+        processGlobalOtFieldChanges();
       }
     }
-
-    if (!successCount && !loadedDocuments.length) {
-      setSyncStatus(`Sin conexion ${new Date().toLocaleTimeString("es-CO")}`);
-      syncInProgressRef.current = false;
-      return;
-    }
-
-    const fingerprint = buildSyncFingerprint(loadedDocuments);
-    if (automatic && fingerprint && fingerprint === lastSyncFingerprintRef.current) {
-      setSyncStatus(`Sin cambios ${new Date().toLocaleTimeString("es-CO")}`);
-      addLog(`Sincronizacion automatica sin cambios (${formatDuration(startedAt)}).`);
-      syncInProgressRef.current = false;
-      return;
-    }
-
-    const nextRecords = loadedDocuments.flatMap((document) => document.records);
-    await yieldToBrowser();
-    const nextRelations = detectRelations(nextRecords);
-    await yieldToBrowser();
-    await syncLinkedEmailConfig(loadedDocuments, allowAuthPrompt, automatic);
-    await yieldToBrowser();
-    if (!automatic) {
-      await syncFinancialSummary(loadedDocuments, allowAuthPrompt);
-      await yieldToBrowser();
-    } else {
-      addLog("Resumen financiero omitido en sincronizacion automatica.");
-    }
-    const nextAlerts = detectAnomalies(nextRecords, nextRelations);
-    setDocuments(loadedDocuments);
-    setRecords(nextRecords);
-    setRelations(nextRelations);
-    setAlerts(nextAlerts);
-    lastSyncFingerprintRef.current = fingerprint;
-    setSyncStatus(`${successCount ? "Actualizado" : "Datos conservados"} ${new Date().toLocaleTimeString("es-CO")}`);
-    addLog(`Rendimiento: sincronizacion completada en ${formatDuration(startedAt)}.`);
-    syncInProgressRef.current = false;
   }
 
   async function syncFinancialSummary(loadedDocuments, allowAuthPrompt = false) {
@@ -760,7 +810,15 @@ function App() {
         </nav>
 
         <div className="sync-card">
-          <span>{syncStatus}</span>
+          <div className="sync-card-status">
+            <span>{syncStatus}</span>
+            {syncProgress ? (
+              <small className="sync-progress">
+                {syncProgress.loaded}/{syncProgress.total} hojas
+                {syncProgress.current ? ` · ${syncProgress.current}` : ""}
+              </small>
+            ) : null}
+          </div>
           <button onClick={() => syncAll(sources, true)} type="button">
             Sincronizar
           </button>
@@ -913,16 +971,19 @@ function yieldToBrowser() {
   });
 }
 
-async function mapWithConcurrency(items, limit, mapper) {
+async function mapWithConcurrency(items, limit, mapper, onProgress) {
   if (!items?.length) return [];
   const results = new Array(items.length);
   let nextIndex = 0;
+  let completed = 0;
 
   async function worker() {
     while (nextIndex < items.length) {
       const currentIndex = nextIndex;
       nextIndex += 1;
       results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      completed += 1;
+      if (onProgress) onProgress(completed, items.length, items[currentIndex]);
     }
   }
 

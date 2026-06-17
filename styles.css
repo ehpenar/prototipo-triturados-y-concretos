@@ -179,9 +179,20 @@ button:disabled {
   gap: 10px;
 }
 
+.sync-card-status {
+  display: grid;
+  gap: 4px;
+}
+
 .sync-card span {
   font-size: 13px;
   color: #cbd5dc;
+}
+
+.sync-progress {
+  font-size: 11px;
+  color: #8fa3b0;
+  line-height: 1.3;
 }
 
 .sync-card .secondary-button {
